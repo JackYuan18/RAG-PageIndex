@@ -1,0 +1,122 @@
+NON-COMMERCIAL LICENSE
+
+Copyright (c) 2025 [Your Name/Organization]
+
+This work is based on PageIndex (https://github.com/VectifyAI/PageIndex), 
+which is licensed under the MIT License by VectifyAI.
+
+TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+
+1. DEFINITIONS
+
+   "License" shall mean the terms and conditions for use, reproduction,
+   and distribution as defined by this document.
+
+   "Licensor" shall mean the copyright owner or entity authorized by
+   the copyright owner that is granting the License.
+
+   "Legal Entity" shall mean the union of the acting entity and all
+   other entities that control, are controlled by, or are under common
+   control with that entity.
+
+   "You" (or "Your") shall mean an individual or Legal Entity
+   exercising permissions granted by this License.
+
+   "Source" form shall mean the preferred form for making modifications,
+   including but not limited to software source code, documentation
+   source, and configuration files.
+
+   "Object" form shall mean any form resulting from mechanical
+   transformation or translation of a Source form, including but
+   not limited to compiled object code, generated documentation,
+   and conversions to other media types.
+
+   "Work" shall mean the work of authorship, whether in Source or
+   Object form, made available under License, as indicated by a
+   copyright notice that is included in or attached to the work.
+
+   "Derivative Works" shall mean any work, whether in Source or Object
+   form, that is based on (or derived from) the Work and for which the
+   editorial revisions, annotations, elaborations, or other modifications
+   represent, as a whole, an original work of authorship.
+
+   "Commercial Use" means any use of the Work or Derivative Works
+   that is primarily intended for or directed toward commercial advantage
+   or monetary compensation.
+
+2. GRANT OF COPYRIGHT LICENSE
+
+   Subject to the terms and conditions of this License, each Contributor
+   hereby grants to You a perpetual, worldwide, non-exclusive, no-charge,
+   royalty-free license to use, reproduce, modify, and distribute the Work
+   and such Derivative Works in source or object form, PROVIDED THAT:
+
+   a) Such use is NON-COMMERCIAL in nature. Commercial use is expressly
+      prohibited without prior written permission from the Licensor.
+
+   b) Any distribution of the Work or Derivative Works must include a copy
+      of this License and the following acknowledgment:
+      "This work is based on PageIndex (https://github.com/VectifyAI/PageIndex)
+       and is licensed under a Non-Commercial License."
+
+   c) You must give any other recipients of the Work or Derivative Works
+      a copy of this License.
+
+3. RESTRICTIONS
+
+   The license granted above is expressly made subject to and limited by
+   the following restrictions:
+
+   a) You may NOT use the Work or Derivative Works for Commercial Use
+      without explicit written permission from the Licensor.
+
+   b) You may NOT sublicense the Work or Derivative Works for Commercial Use.
+
+   c) You may NOT remove or alter any copyright notices contained within
+      the Work.
+
+   d) You must retain all copyright notices from the original PageIndex
+      framework.
+
+4. COMMERCIAL USE PERMISSION
+
+   If you wish to use the Work or Derivative Works for Commercial Use,
+   you must contact the Licensor to obtain a separate commercial license.
+   Commercial licenses may be subject to fees and additional terms.
+
+5. CONTRIBUTIONS
+
+   Unless You explicitly state otherwise, any Contribution intentionally
+   submitted for inclusion in the Work by You to the Licensor shall be
+   under the terms and conditions of this License, without any additional
+   terms or conditions.
+
+6. WARRANTY DISCLAIMER
+
+   THE WORK IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+   THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+   OUT OF OR IN CONNECTION WITH THE WORK OR THE USE OR OTHER DEALINGS IN THE WORK.
+
+7. LIMITATION OF LIABILITY
+
+   IN NO EVENT AND UNDER NO LEGAL THEORY, WHETHER IN TORT (INCLUDING NEGLIGENCE),
+   CONTRACT, OR OTHERWISE, UNLESS REQUIRED BY APPLICABLE LAW (SUCH AS DELIBERATE
+   AND GROSSLY NEGLIGENT ACTS) OR AGREED TO IN WRITING, SHALL ANY CONTRIBUTOR BE
+   LIABLE TO YOU FOR DAMAGES, INCLUDING ANY DIRECT, INDIRECT, SPECIAL, INCIDENTAL,
+   OR CONSEQUENTIAL DAMAGES OF ANY CHARACTER ARISING AS A RESULT OF THIS LICENSE
+   OR OUT OF THE USE OR INABILITY TO USE THE WORK (INCLUDING BUT NOT LIMITED TO
+   DAMAGES FOR LOSS OF GOODWILL, WORK STOPPAGE, COMPUTER FAILURE OR MALFUNCTION,
+   OR ANY AND ALL OTHER COMMERCIAL DAMAGES OR LOSSES), EVEN IF SUCH CONTRIBUTOR
+   HAS BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
+
+8. ACKNOWLEDGMENT OF ORIGINAL WORK
+
+   This work is based on PageIndex (https://github.com/VectifyAI/PageIndex),
+   which is licensed under the MIT License. The original PageIndex framework
+   and its contributors retain all rights to their original work. This License
+   applies only to modifications and enhancements made by the Licensor.
+
+END OF TERMS AND CONDITIONS
