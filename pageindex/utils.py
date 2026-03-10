@@ -111,37 +111,6 @@ def ChatGPT_API_with_finish_reason(model, prompt, chat_history=None):
                 logging.error('Max retries reached for prompt: ' + prompt)
                 return "Error"
 
-def Free_API_with_finish_reason(model, prompt, chat_history=None):
-    max_retries = 10
-    client = get_openai_client(model)
-    model_name = get_model_name(model)
-    for i in range(max_retries):
-        try:
-            if chat_history:
-                messages = chat_history
-                messages.append({"role": "user", "content": prompt})
-            else:
-                messages = [{"role": "user", "content": prompt}]
-            
-            response = client.chat.completions.create(
-                model=model_name,
-                messages=messages,
-                temperature=0,
-            )
-            if response.choices[0].finish_reason == "length":
-                return response.choices[0].message.content, "max_output_reached"
-            else:
-                return response.choices[0].message.content, "finished"
-
-        except Exception as e:
-            print('************* Retrying *************')
-            logging.error(f"Error: {e}")
-            if i < max_retries - 1:
-                time.sleep(1)  # Wait for 1秒 before retrying
-            else:
-                logging.error('Max retries reached for prompt: ' + prompt)
-                return "Error"
-
 
 
 def ChatGPT_API(model, prompt, chat_history=None):
