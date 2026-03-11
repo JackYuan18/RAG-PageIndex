@@ -19,3 +19,4 @@ __pycache__/
 results/
 *.pyc
 __pycache__/
+Database/

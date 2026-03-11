@@ -32,10 +32,10 @@ import sys
 import json
 import argparse
 import asyncio
+import textwrap
 from collections import defaultdict
 from typing import List, Dict, Any, Optional
 from dotenv import load_dotenv
-from utils import *
 
 # Add parent directory to path to ensure imports work
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -43,6 +43,8 @@ project_root = os.path.dirname(script_dir)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
+# Import utils after path setup
+from RAG.utils import *
 from pageindex.utils import ChatGPT_API, ChatGPT_API_async, get_model_name, extract_json
 import openai
 
@@ -55,7 +57,7 @@ DOCINDEX_PATH = os.path.join(RESULTS_DIR, 'DocIndex')
 
 
 
-async def rag_query(query: str, model: Optional[str] = None, doc_index_path: Optional[str] = None) -> Dict[str, Any]:
+async def rag_query(query: str, model: Optional[str] = None, doc_index_path: Optional[str] = None, progress_callback=None) -> Dict[str, Any]:
     """
     Main RAG query function.
     
@@ -63,10 +65,17 @@ async def rag_query(query: str, model: Optional[str] = None, doc_index_path: Opt
         query: User query/question
         model: LLM model to use (defaults to environment setting)
         doc_index_path: Optional path to DocIndex file
+        progress_callback: Optional callback function(message: str) to receive progress updates
     
     Returns:
         Dictionary with query results including matched docs, retrieved nodes, and answer
     """
+    def log(message):
+        """Log message to both callback and print."""
+        if progress_callback:
+            progress_callback(message)
+        print(message)
+    
     # Load DocIndex
     global DOCINDEX_PATH
     if doc_index_path:
@@ -80,11 +89,11 @@ async def rag_query(query: str, model: Optional[str] = None, doc_index_path: Opt
             "query": query
         }
     
-    print(f"Query: {query}\n")
-    print("=" * 80)
+    log(f"Query: {query}\n")
+    log("=" * 80)
     
     # Match query to keywords
-    print("\nStep 1: Matching query to keywords in DocIndex...")
+    log("\nStep 1: Matching query to keywords in DocIndex...")
     matched_docs = match_query_to_keywords(query, doc_index, model=model)
     
     if not matched_docs:
@@ -94,12 +103,12 @@ async def rag_query(query: str, model: Optional[str] = None, doc_index_path: Opt
             "matched_documents": []
         }
     
-    print(f"Found {len(matched_docs)} matching document(s):")
+    log(f"Found {len(matched_docs)} matching document(s):")
     for doc in matched_docs:
-        print(f"  - {doc}")
+        log(f"  - {doc}")
     
     # Load document structures
-    print("\nStep 2: Loading document structures...")
+    log("\nStep 2: Loading document structures...")
     
     all_trees = []
     all_node_maps = []
@@ -116,19 +125,28 @@ async def rag_query(query: str, model: Optional[str] = None, doc_index_path: Opt
         }
     
     # Perform tree search for each document
-    print("\nStep 3: Performing reasoning-based tree search...")
+    log("\nStep 3: Performing reasoning-based tree search...")
     all_retrieved_nodes = []
     
     for i, doc_info in enumerate(all_trees):
-        print(f"\nSearching in: {os.path.basename(doc_info['path'])}")
+        log(f"\nSearching in: {os.path.basename(doc_info['path'])}")
         search_result = await tree_search(query, doc_info['tree'], model=model)
         
         thinking = search_result.get('thinking', 'N/A')
-        print(f"\nReasoning Process:")
-        print_wrapped(thinking)
+        log(f"\nReasoning Process:")
+        # Use callback-aware print_wrapped
+        wrapped_thinking = textwrap.fill(thinking, width=80)
+        log(wrapped_thinking)
         
         node_ids = search_result.get('node_list', [])
-        print_retrieved_nodes(node_ids, all_node_maps[i]['node_map'])
+        # Use callback-aware print_retrieved_nodes
+        retrieved_lines = ["\nRetrieved Nodes:"]
+        for node_id in node_ids:
+            if node_id in all_node_maps[i]['node_map']:
+                node = all_node_maps[i]['node_map'][node_id]
+                retrieved_lines.append(f"  Node ID: {node['node_id']}\t Page: {node.get('page_index', node.get('start_index', 'N/A'))}\t Title: {node.get('title', 'Unknown')}")
+        retrieved_info = "\n".join(retrieved_lines)
+        log(retrieved_info)
         
         all_retrieved_nodes.append({
             'path': doc_info['path'],
@@ -137,7 +155,7 @@ async def rag_query(query: str, model: Optional[str] = None, doc_index_path: Opt
         })
     
     # Extract context from retrieved nodes
-    print("\nStep 4: Extracting context from retrieved nodes...")
+    log("\nStep 4: Extracting context from retrieved nodes...")
     all_contexts = []
     
     for i, doc_info in enumerate(all_node_maps):
@@ -147,18 +165,19 @@ async def rag_query(query: str, model: Optional[str] = None, doc_index_path: Opt
             'path': doc_info['path'],
             'context': context
         })
-        print(f"  Extracted {len(context)} characters from {os.path.basename(doc_info['path'])}")
+        log(f"  Extracted {len(context)} characters from {os.path.basename(doc_info['path'])}")
     
     # Combine all contexts
     combined_context = "\n\n---\n\n".join([c['context'] for c in all_contexts])
     
     # Generate answer
-    print("\nStep 5: Generating answer...")
+    log("\nStep 5: Generating answer...")
     answer = await generate_answer(query, combined_context, model=model)
     
-    print("\n" + "=" * 80)
-    print("\nAnswer:")
-    print_wrapped(answer)
+    log("\n" + "=" * 80)
+    log("\nAnswer:")
+    wrapped_answer = textwrap.fill(answer, width=80)
+    log(wrapped_answer)
     
     return {
         "query": query,
@@ -195,13 +214,13 @@ def main():
         DOCINDEX_PATH = os.path.join(RESULTS_DIR, 'DocIndex')
     
     # Get model from environment if not specified
-    model = args.model
-    if not model:
-        api_provider = os.getenv("API_PROVIDER", "ollama").lower()
-        if api_provider == "ollama":
-            model = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
-        else:
-            model = "gpt-4o-2024-11-20"
+    model = "gpt-5.1"
+    # if not model:
+    #     api_provider = os.getenv("API_PROVIDER", "ollama").lower()
+    #     if api_provider == "ollama":
+    #         model = os.getenv("OLLAMA_MODEL", "llama3.1:8b")
+    #     else:
+    #         model = "gpt-4o-2024-11-20"
     
     # Run RAG query
     result = asyncio.run(rag_query(args.query, model=model, doc_index_path=DOCINDEX_PATH))

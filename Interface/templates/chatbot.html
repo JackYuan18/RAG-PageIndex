@@ -1,0 +1,592 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PageIndex RAG Chatbot</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .chatbot-container {
+            width: 100%;
+            max-width: 900px;
+            height: 90vh;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .chatbot-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .chatbot-header h1 {
+            font-size: 24px;
+            font-weight: 600;
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 14px;
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #4ade80;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .chatbot-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 30px;
+            background: #f8f9fa;
+        }
+
+        .message {
+            margin-bottom: 20px;
+            display: flex;
+            flex-direction: column;
+            animation: fadeIn 0.3s ease-in;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .message.user {
+            align-items: flex-end;
+        }
+
+        .message.assistant {
+            align-items: flex-start;
+        }
+
+        .message-bubble {
+            max-width: 70%;
+            padding: 15px 20px;
+            border-radius: 18px;
+            word-wrap: break-word;
+            line-height: 1.5;
+        }
+
+        .message.user .message-bubble {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-bottom-right-radius: 4px;
+        }
+
+        .message.assistant .message-bubble {
+            background: white;
+            color: #333;
+            border: 1px solid #e5e7eb;
+            border-bottom-left-radius: 4px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .message-info {
+            font-size: 12px;
+            color: #6b7280;
+            margin-top: 5px;
+            padding: 0 5px;
+        }
+
+        .chatbot-input {
+            padding: 20px 30px;
+            background: white;
+            border-top: 1px solid #e5e7eb;
+        }
+
+        .model-input-container {
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .model-input-container label {
+            font-size: 14px;
+            color: #6b7280;
+            font-weight: 500;
+            white-space: nowrap;
+            min-width: 60px;
+        }
+
+        .model-input-wrapper {
+            flex: 1;
+            position: relative;
+        }
+
+        .model-input-wrapper input {
+            width: 100%;
+            padding: 10px 15px;
+            border: 2px solid #e5e7eb;
+            border-radius: 8px;
+            font-size: 14px;
+            font-family: inherit;
+            transition: border-color 0.3s;
+        }
+
+        .model-input-wrapper input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .model-input-wrapper input::placeholder {
+            color: #9ca3af;
+        }
+
+        .input-container {
+            display: flex;
+            gap: 10px;
+            align-items: flex-end;
+        }
+
+        .input-wrapper {
+            flex: 1;
+            position: relative;
+        }
+
+        textarea {
+            width: 100%;
+            padding: 15px 20px;
+            border: 2px solid #e5e7eb;
+            border-radius: 12px;
+            font-size: 16px;
+            font-family: inherit;
+            resize: none;
+            min-height: 50px;
+            max-height: 150px;
+            transition: border-color 0.3s;
+        }
+
+        textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .send-button {
+            padding: 15px 30px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            min-width: 100px;
+        }
+
+        .send-button:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        .send-button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top-color: white;
+            animation: spin 1s ease-in-out infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .error-message {
+            background: #fee2e2;
+            color: #dc2626;
+            padding: 15px 20px;
+            border-radius: 12px;
+            border-left: 4px solid #dc2626;
+            margin-bottom: 20px;
+        }
+
+        .progress-message {
+            background: #eff6ff;
+            color: #1e40af;
+            padding: 12px 18px;
+            border-radius: 8px;
+            border-left: 3px solid #3b82f6;
+            margin-bottom: 10px;
+            font-size: 13px;
+            font-family: 'Courier New', monospace;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .progress-container {
+            max-height: 300px;
+            overflow-y: auto;
+            margin-bottom: 10px;
+        }
+
+        .empty-state {
+            text-align: center;
+            color: #6b7280;
+            padding: 60px 20px;
+        }
+
+        .empty-state svg {
+            width: 80px;
+            height: 80px;
+            margin-bottom: 20px;
+            opacity: 0.5;
+        }
+
+        .empty-state h2 {
+            font-size: 20px;
+            margin-bottom: 10px;
+        }
+
+        .empty-state p {
+            font-size: 14px;
+        }
+
+        /* Scrollbar styling */
+        .chatbot-messages::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .chatbot-messages::-webkit-scrollbar-track {
+            background: #f1f1f1;
+        }
+
+        .chatbot-messages::-webkit-scrollbar-thumb {
+            background: #888;
+            border-radius: 4px;
+        }
+
+        .chatbot-messages::-webkit-scrollbar-thumb:hover {
+            background: #555;
+        }
+    </style>
+</head>
+<body>
+    <div class="chatbot-container">
+        <div class="chatbot-header">
+            <div>
+                <h1>📚 PageIndex RAG Chatbot</h1>
+            </div>
+            <div class="status-indicator">
+                <span class="status-dot"></span>
+                <span id="status-text">Ready</span>
+            </div>
+        </div>
+
+        <div class="chatbot-messages" id="messages">
+            <div class="empty-state">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+                </svg>
+                <h2>Welcome to PageIndex RAG</h2>
+                <p>Ask questions about your indexed documents</p>
+            </div>
+        </div>
+
+        <div class="chatbot-input">
+            <div class="model-input-container">
+                <label for="model-input">Model:</label>
+                <div class="model-input-wrapper">
+                    <input 
+                        type="text" 
+                        id="model-input" 
+                        value="ollama"
+                        placeholder="Enter model name (e.g., ollama, llama3.1:8b, gpt-4o-2024-11-20)"
+                        onkeydown="handleModelKeyDown(event)"
+                    />
+                </div>
+            </div>
+            <div class="input-container">
+                <div class="input-wrapper">
+                    <textarea 
+                        id="query-input" 
+                        placeholder="Type your question here..." 
+                        rows="1"
+                        onkeydown="handleKeyDown(event)"
+                    ></textarea>
+                </div>
+                <button class="send-button" id="send-button" onclick="sendQuery()">
+                    Send
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const messagesContainer = document.getElementById('messages');
+        const queryInput = document.getElementById('query-input');
+        const modelInput = document.getElementById('model-input');
+        const sendButton = document.getElementById('send-button');
+        const statusText = document.getElementById('status-text');
+
+        // Check status on load
+        checkStatus();
+
+        function checkStatus() {
+            fetch('/api/status')
+                .then(response => response.json())
+                .then(data => {
+                    if (!data.docindex_available) {
+                        statusText.textContent = 'DocIndex Not Found';
+                        statusText.parentElement.querySelector('.status-dot').style.background = '#ef4444';
+                        addSystemMessage('Warning: DocIndex not found. Please run run_pageindex.py first to generate document structures.');
+                    } else {
+                        statusText.textContent = 'Ready';
+                    }
+                })
+                .catch(error => {
+                    console.error('Error checking status:', error);
+                });
+        }
+
+        function handleKeyDown(event) {
+            if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                sendQuery();
+            }
+        }
+
+        function handleModelKeyDown(event) {
+            // Allow Enter to submit, but don't prevent default for other keys
+            if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                sendQuery();
+            }
+        }
+
+        function autoResize(textarea) {
+            textarea.style.height = 'auto';
+            textarea.style.height = Math.min(textarea.scrollHeight, 150) + 'px';
+        }
+
+        queryInput.addEventListener('input', function() {
+            autoResize(this);
+        });
+
+        function addMessage(content, isUser = false, info = '') {
+            // Remove empty state if it exists
+            const emptyState = messagesContainer.querySelector('.empty-state');
+            if (emptyState) {
+                emptyState.remove();
+            }
+
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${isUser ? 'user' : 'assistant'}`;
+            
+            const bubbleDiv = document.createElement('div');
+            bubbleDiv.className = 'message-bubble';
+            bubbleDiv.textContent = content;
+            
+            messageDiv.appendChild(bubbleDiv);
+            
+            if (info) {
+                const infoDiv = document.createElement('div');
+                infoDiv.className = 'message-info';
+                infoDiv.textContent = info;
+                messageDiv.appendChild(infoDiv);
+            }
+            
+            messagesContainer.appendChild(messageDiv);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+
+        function addSystemMessage(content) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'error-message';
+            messageDiv.textContent = content;
+            messagesContainer.appendChild(messageDiv);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+
+        function addLoadingMessage() {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message assistant';
+            messageDiv.id = 'loading-message';
+            
+            const bubbleDiv = document.createElement('div');
+            bubbleDiv.className = 'message-bubble';
+            
+            const progressContainer = document.createElement('div');
+            progressContainer.className = 'progress-container';
+            progressContainer.id = 'progress-container';
+            
+            bubbleDiv.appendChild(progressContainer);
+            messageDiv.appendChild(bubbleDiv);
+            messagesContainer.appendChild(messageDiv);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+
+        function clearProgressMessages() {
+            const progressContainer = document.getElementById('progress-container');
+            if (progressContainer) {
+                progressContainer.innerHTML = '';
+            }
+        }
+
+        function addProgressMessage(message, clearPrevious = false) {
+            const progressContainer = document.getElementById('progress-container');
+            if (progressContainer) {
+                // Clear previous messages if this is a new step
+                if (clearPrevious) {
+                    clearProgressMessages();
+                }
+                
+                const progressDiv = document.createElement('div');
+                progressDiv.className = 'progress-message';
+                progressDiv.textContent = message;
+                progressContainer.appendChild(progressDiv);
+                progressContainer.scrollTop = progressContainer.scrollHeight;
+            }
+        }
+
+        function removeLoadingMessage() {
+            const loadingMessage = document.getElementById('loading-message');
+            if (loadingMessage) {
+                loadingMessage.remove();
+            }
+        }
+
+        async function sendQuery() {
+            const query = queryInput.value.trim();
+            const model = modelInput.value.trim() || 'ollama';  // Default to "ollama" if empty
+            
+            if (!query) {
+                return;
+            }
+
+            // Disable input and button
+            queryInput.disabled = true;
+            modelInput.disabled = true;
+            sendButton.disabled = true;
+            sendButton.innerHTML = '<div class="loading"></div>';
+
+            // Add user message
+            addMessage(query, true);
+
+            // Clear input
+            queryInput.value = '';
+            queryInput.style.height = 'auto';
+
+            // Add loading message with progress container
+            addLoadingMessage();
+
+            // Update status
+            statusText.textContent = 'Processing...';
+
+            try {
+                // Use EventSource for Server-Sent Events
+                const response = await fetch('/api/query', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ 
+                        query: query,
+                        model: model
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    
+                    if (done) break;
+                    
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop(); // Keep incomplete line in buffer
+                    
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const data = JSON.parse(line.slice(6));
+                                
+                                if (data.type === 'progress') {
+                                    addProgressMessage(data.message, data.clear_previous || false);
+                                } else if (data.type === 'result') {
+                                    removeLoadingMessage();
+                                    const result = data.data;
+                                    if (result.error) {
+                                        addSystemMessage(`Error: ${result.error}`);
+                                        statusText.textContent = 'Error';
+                                    } else {
+                                        const info = `Matched ${result.matched_documents.length} document(s), Retrieved ${result.retrieved_nodes.reduce((sum, r) => sum + r.node_ids.length, 0)} node(s)`;
+                                        addMessage(result.answer, false, info);
+                                        statusText.textContent = 'Ready';
+                                    }
+                                } else if (data.type === 'error') {
+                                    removeLoadingMessage();
+                                    addSystemMessage(`Error: ${data.error}`);
+                                    statusText.textContent = 'Error';
+                                }
+                            } catch (e) {
+                                console.error('Error parsing SSE data:', e);
+                            }
+                        }
+                    }
+                }
+            } catch (error) {
+                removeLoadingMessage();
+                addSystemMessage(`Network error: ${error.message}`);
+                statusText.textContent = 'Error';
+            } finally {
+                // Re-enable input and button
+                queryInput.disabled = false;
+                modelInput.disabled = false;
+                sendButton.disabled = false;
+                sendButton.textContent = 'Send';
+                queryInput.focus();
+            }
+        }
+    </script>
+</body>
+</html>

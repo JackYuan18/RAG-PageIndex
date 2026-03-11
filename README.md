@@ -10,7 +10,7 @@
 
 ## Overview
 
-> **Note**: This is a modified version of [PageIndex](https://github.com/VectifyAI/PageIndex) with enhanced Ollama support and improved error handling. The original PageIndex framework is developed by [VectifyAI](https://github.com/VectifyAI).
+> **Note**: This is a modified version of [PageIndex](https://github.com/VectifyAI/PageIndex) with enhanced Ollama support such that the code can run without API and improved error handling. The original PageIndex framework is developed by [VectifyAI](https://github.com/VectifyAI).
 
 PageIndex is a **reasoning-based**, **vectorless RAG** framework that performs retrieval through document structure analysis and LLM reasoning, rather than traditional vector similarity search. Unlike conventional RAG systems, PageIndex:
 
@@ -75,6 +75,20 @@ PageIndex is a **reasoning-based**, **vectorless RAG** framework that performs r
 
 ### Install Dependencies
 
+#### Option 1: Using Conda (Recommended)
+
+Create and activate the conda environment:
+
+```bash
+# Create environment from environment.yml
+conda env create -f environment.yml
+
+# Activate the environment
+conda activate pageindex
+```
+
+#### Option 2: Using pip
+
 ```bash
 pip install -r requirements.txt
 ```
@@ -86,6 +100,7 @@ pip install -r requirements.txt
 - `python-dotenv>=1.1.0` - Environment variable management
 - `tiktoken>=0.11.0` - Token counting
 - `pyyaml>=6.0.2` - YAML configuration
+- `flask>=3.0.0` - Web framework for chatbot interface
 
 ### Optional: Ollama Setup
 
@@ -166,11 +181,18 @@ PageIndex/
 │   ├── page_index_md.py   # Markdown processing
 │   ├── utils.py           # Utility functions and API clients
 │   └── config.yaml        # Configuration file
+├── RAG/                    # RAG query scripts
+│   ├── rag_query.py       # RAG query function
+│   └── utils.py           # RAG utility functions
+├── Interface/              # Web interface
+│   ├── app.py             # Flask application
+│   └── templates/         # HTML templates
 ├── run_pageindex.py       # Main entry point for PDF processing
 ├── test_similar.py        # Keyword similarity testing
 ├── cookbook/              # Example notebooks and tutorials
 ├── results/               # Generated document structures (gitignored)
-├── requirements.txt       # Python dependencies
+├── requirements.txt       # Python dependencies (pip)
+├── environment.yml        # Conda environment configuration
 ├── OLLAMA_SETUP.md        # Ollama setup guide
 └── README.md              # This file
 ```

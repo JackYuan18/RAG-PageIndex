@@ -125,18 +125,18 @@ def match_query_to_keywords(query: str, doc_index: Dict[str, List[str]], model: 
     
     # Use LLM to find relevant keywords
     prompt = f"""You are given a query and a list of keywords from a document index.
-Your task is to identify which keywords are relevant to answering the query.
+        Your task is to identify which keywords are relevant to answering the query.
 
-Query: {query}
+        Query: {query}
 
-Keywords:
-{json.dumps(keywords, indent=2)}
+        Keywords:
+        {json.dumps(keywords, indent=2)}
 
-Please reply in the following JSON format:
-{{
-    "thinking": "<Your thinking process on which keywords are relevant>",
-    "relevant_keywords": ["keyword1", "keyword2", ...]
-}}
+        Please reply in the following JSON format:
+        {{
+            "thinking": "<Your thinking process on which keywords are relevant>",
+            "relevant_keywords": ["keyword1", "keyword2", ...]
+        }}
 
 Return ONLY the JSON object. Do not include any other text."""
 
@@ -245,10 +245,13 @@ def print_tree(tree: List[Dict[str, Any]], indent: int = 0):
             print_tree(node['nodes'], indent + 1)
 
 
-def print_wrapped(text: str, width: int = 80):
+def print_wrapped(text: str, width: int = 80, return_text: bool = False):
     """Print text with word wrapping."""
     import textwrap
-    print(textwrap.fill(text, width=width))
+    wrapped = textwrap.fill(text, width=width)
+    if return_text:
+        return wrapped
+    print(wrapped)
 
 
 async def tree_search(query: str, tree: List[Dict[str, Any]], model: Optional[str] = None) -> Dict[str, Any]:
@@ -322,58 +325,13 @@ async def extract_context(node_map: Dict[str, Dict[str, Any]], node_ids: List[st
             node = node_map[node_id]
             
             # Try different field names for text content
-            text = node.get('text') or node.get('content') or node.get('summary', '')
-            
-            # If no text available, try to extract from PDF
-            if not text and doc_path and 'start_index' in node and 'end_index' in node:
-                try:
-                    # Try to find original PDF path
-                    # Handle both absolute and relative paths
-                    if not os.path.isabs(doc_path):
-                        doc_path_full = os.path.join(results_dir, os.path.basename(doc_path))
-                    else:
-                        doc_path_full = doc_path
-                    
-                    pdf_path = doc_path_full.replace('_structure.json', '.pdf')
-                    if not os.path.exists(pdf_path):
-                        # Try without structure suffix
-                        pdf_path = doc_path_full.replace('structure.json', '.pdf')
-                    
-                    # Also try in project root or tests/pdfs directory
-                    if not os.path.exists(pdf_path):
-                        pdf_name = os.path.basename(pdf_path)
-                        # Try tests/pdfs directory
-                        test_pdf_path = os.path.join(project_root, 'tests', 'pdfs', pdf_name)
-                        if os.path.exists(test_pdf_path):
-                            pdf_path = test_pdf_path
-                        # Try results directory
-                        elif os.path.exists(os.path.join(results_dir, pdf_name)):
-                            pdf_path = os.path.join(results_dir, pdf_name)
-                    
-                    if os.path.exists(pdf_path):
-                        import PyPDF2
-                        pdf_reader = PyPDF2.PdfReader(pdf_path)
-                        start_idx = node['start_index'] - 1  # Convert to 0-based
-                        end_idx = node['end_index']
-                        
-                        page_texts = []
-                        for page_num in range(start_idx, min(end_idx, len(pdf_reader.pages))):
-                            page = pdf_reader.pages[page_num]
-                            page_texts.append(page.extract_text())
-                        
-                        text = '\n\n'.join(page_texts)
-                except Exception as e:
-                    print(f"  Warning: Could not extract text from PDF for node {node_id}: {e}")
-            
-            # Fallback to summary or title if no text
-            if not text:
-                text = node.get('summary', '') or node.get('title', '')
-            
-            if text:
-                # Add title as header
+            try:
+                text = node.get('text') or node.get('content') or node.get('summary', '')
                 title = node.get('title', f'Node {node_id}')
                 context_parts.append(f"## {title}\n\n{text}")
-    
+            
+            except Exception as e:
+                raise Exception(f"Error extracting text from node {node_id}: {e}")
     return "\n\n---\n\n".join(context_parts)
 
 
@@ -430,13 +388,17 @@ def extract_tree_and_node_map(structure: Dict[str, Any], doc_path: str, all_tree
             print(f"  Loaded: {os.path.basename(doc_path)} ({len(node_map)} nodes)")
     return all_trees, all_node_maps
 
-def print_retrieved_nodes(node_ids: List[str], node_map: Dict[str, Dict[str, Any]]) -> None:
+def print_retrieved_nodes(node_ids: List[str], node_map: Dict[str, Dict[str, Any]], return_text: bool = False) -> str:
     """Print retrieved nodes in a readable format."""
-    print(f"\nRetrieved Nodes:")
+    lines = ["\nRetrieved Nodes:"]
     for node_id in node_ids:
         if node_id in node_map:
             node = node_map[node_id]
-            print(f"  Node ID: {node['node_id']}\t Page: {node.get('page_index', node.get('start_index', 'N/A'))}\t Title: {node.get('title', 'Unknown')}")
+            lines.append(f"  Node ID: {node['node_id']}\t Page: {node.get('page_index', node.get('start_index', 'N/A'))}\t Title: {node.get('title', 'Unknown')}")
+    result = "\n".join(lines)
+    if return_text:
+        return result
+    print(result)
 
         
 if __name__ == "__main__":

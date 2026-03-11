@@ -1,0 +1,24 @@
+name: pageindex
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+    # Core LLM and API dependencies
+    - openai==1.101.0
+    - tiktoken>=0.11.0
+    
+    # PDF processing libraries
+    - PyPDF2==3.0.1
+    - pymupdf==1.26.4
+    
+    # Configuration and environment management
+    - python-dotenv==1.1.0
+    
+    # Data processing and serialization
+    - pyyaml==6.0.2
+    
+    # Web framework for chatbot interface
+    - flask==3.0.0

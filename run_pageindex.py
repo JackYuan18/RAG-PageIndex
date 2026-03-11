@@ -65,8 +65,8 @@ def merge_keywords(keywords, doc_index, model=None):
 if __name__ == "__main__":
     # Set up argument parser
     parser = argparse.ArgumentParser(description='Process PDF or Markdown document and generate structure')
-    # parser.add_argument('--pdf_path', type=str, default = '/home/zyuan/NSTSCE_Bot/NSTSCE/Database/Lightweight_Distributed_Gaussian_Process_Regression_for_Online_Machine_Learning.pdf', help='Path to the PDF file')
-    parser.add_argument('--pdf_path', type=str, default = '/home/zyuan/NSTSCE_Bot/NSTSCE/Database/Communication-aware_Distributed_Gaussian_Process_Regression_Algorithms_for_Real-time_Machine_Learning.pdf', help='Path to the PDF file')
+    parser.add_argument('--pdf_path', type=str, default = '/home/zyuan/NSTSCE_Bot/NSTSCE/Database/Lightweight_Distributed_Gaussian_Process_Regression_for_Online_Machine_Learning.pdf', help='Path to the PDF file')
+    # parser.add_argument('--pdf_path', type=str, default = '/home/zyuan/NSTSCE_Bot/NSTSCE/Database/Communication-aware_Distributed_Gaussian_Process_Regression_Algorithms_for_Real-time_Machine_Learning.pdf', help='Path to the PDF file')
     parser.add_argument('--md_path', type=str, help='Path to the Markdown file')
 
     # parser.add_argument('--model', type=str, default='gpt-5.1', help='Model to use')

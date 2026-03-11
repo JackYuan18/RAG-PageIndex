@@ -22,7 +22,9 @@ HF_TOKEN = os.getenv("HF_TOKEN")
 # API Provider: "ollama", "openai", "huggingface", or None (auto-detect)
 # API_PROVIDER = os.getenv("API_PROVIDER", "ollama").lower()  # Default to Ollama
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")  # Default model for Ollama
+# OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")  # Default model for Ollama
+# OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:70b")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b-instruct-q8_0")
 
 
 
@@ -90,7 +92,8 @@ def ChatGPT_API_with_finish_reason(model, prompt, chat_history=None):
                 messages = chat_history
                 messages.append({"role": "user", "content": prompt})
             else:
-                messages = [{"role": "user", "content": prompt}]
+                messages = [{"role": "system", "content": prompt['system_prompt']},
+                            {"role": "user", "content": prompt['user_prompt']}]
             
             response = client.chat.completions.create(
                 model=model_name,
@@ -123,7 +126,8 @@ def ChatGPT_API(model, prompt, chat_history=None):
                 messages = chat_history
                 messages.append({"role": "user", "content": prompt})
             else:
-                messages = [{"role": "user", "content": prompt}]
+                messages = [{"role": "system", "content": prompt['system_prompt']},
+                            {"role": "user", "content": prompt['user_prompt']}]
             
             response = client.chat.completions.create(
                 model=model_name,
@@ -141,66 +145,11 @@ def ChatGPT_API(model, prompt, chat_history=None):
                 logging.error('Max retries reached for prompt: ' + prompt)
                 return "Error"
 
-def Free_API(model, prompt, chat_history=None):
-    
-    max_retries = 10
-    client = get_openai_client(model)
-    model_name = get_model_name(model)
-    for i in range(max_retries):
-        try:
-            if chat_history:
-                messages = chat_history
-                messages.append({"role": "user", "content": prompt})
-            else:
-                messages = [{"role": "user", "content": prompt}]
-            
-            response = client.chat.completions.create(
-                model=model_name,
-                messages=messages,
-                temperature=0,
-            )
-   
-            return response.choices[0].message.content
-        except Exception as e:
-            print('************* Retrying *************')
-            logging.error(f"Error: {e}")
-            if i < max_retries - 1:
-                time.sleep(1)  # Wait for 1秒 before retrying
-            else:
-                logging.error('Max retries reached for prompt: ' + prompt)
-                return "Error"
-            
-
-async def Free_API_async(model, prompt, chat_history=None):
-    max_retries = 10
-    
-    for i in range(max_retries):
-        try:
-            if chat_history:
-                messages = chat_history
-                messages.append({"role": "user", "content": prompt})
-            else:
-                messages = [{"role": "user", "content": prompt}]
-            async with get_async_openai_client(model) as client:
-                model_name = get_model_name()
-                response = await client.chat.completions.create(
-                    model=model_name,
-                    messages=messages,
-                    temperature=0,
-                )
-                return response.choices[0].message.content
-        except Exception as e:
-            print('************* Retrying *************')
-            logging.error(f"Error: {e}")
-            if i < max_retries - 1:
-                await asyncio.sleep(1)  # Wait for 1s before retrying
-            else:
-                logging.error('Max retries reached for prompt: ' + prompt)
-                return "Error"  
 
 async def ChatGPT_API_async(model, prompt):
     max_retries = 10
-    messages = [{"role": "user", "content": prompt}]
+    messages = [{"role": "system", "content": prompt['system_prompt']},
+                {"role": "user", "content": prompt['user_prompt']}]
     model_name = get_model_name(model)
     for i in range(max_retries):
         try:

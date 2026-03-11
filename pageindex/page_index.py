@@ -19,9 +19,9 @@ async def check_title_appearance(item, page_list, start_index=1, model=None):
     page_number = item['physical_index']
     page_text = page_list[page_number-start_index][0]
 
-    
-    prompt = f"""
-    Verify if a section title appears on a specific page.
+    prompt = {}
+    prompt['system_prompt'] = f"""
+    You are a helpful assistant that checks if a section title appears on a specific page.
 
     CRITICAL JSON RULES:
     - Use double quotes (") for all strings
@@ -38,10 +38,6 @@ async def check_title_appearance(item, page_list, start_index=1, model=None):
     3. The title should be recognizable, even if formatting differs
     4. Answer "yes" if you can find a clear match, "no" if not
 
-
-    Title: "{title}"
-    Page text: {page_text}
-    
     Reply format:
     {{
         
@@ -52,7 +48,16 @@ async def check_title_appearance(item, page_list, start_index=1, model=None):
     - Output ONLY the JSON object
     - Keep thinking field very short or omit it
     - Escape all control characters properly
-    - Do not include explanations outside JSON"""
+    - Do not include explanations outside JSON
+    """
+
+    prompt['user_prompt'] = f"""
+    Verify if a section title appears on a specific page.
+
+    Title: "{title}"
+    Page text: {page_text}
+    
+    """
 
    
     
@@ -68,9 +73,11 @@ async def check_title_appearance(item, page_list, start_index=1, model=None):
 
 
 async def check_title_appearance_in_start(title, page_text, model=None, logger=None):    
-    prompt = f"""
-    Check if a section title appears at the BEGINNING of a page.
-
+    
+    prompt = {}
+    prompt['system_prompt'] = f"""
+    You are a helpful assistant that checks if a section title appears at the BEGINNING of a page.
+    
     CRITICAL: Title must be at the START (first 20% of content). If there's significant content before the title, answer "no".
 
     JSON RULES:
@@ -83,21 +90,27 @@ async def check_title_appearance_in_start(title, page_text, model=None, logger=N
     - Ignore case differences
     - Match if core words match
 
-    The given section title is {title}.
-    The given page_text is {page_text}.
-    
     reply format:
     {{
         "thinking": <why do you think the section appears or starts in the page_text>
         "start_begin": "yes or no" (yes if the section starts in the beginning of the page_text, no otherwise)
     }}
-    Directly return the final JSON structure. Do not output anything else."""
+    Directly return the final JSON structure. Do not output anything else."
+    """
+    
+    prompt['user_prompt'] = f"""
+    
+    Check if a section title appears at the BEGINNING of a page.
 
+
+    The given section title is {title}.
+    The given page_text is {page_text}.
     
     
+    """
+  
     response = ChatGPT_API(model=model, prompt=prompt)
     
-
     response = extract_json(response)
     if logger:
         logger.info(f"Response: {response}")
@@ -1222,6 +1235,7 @@ def page_index_main(doc, opt=None):
 
                 return {
                     'doc_name': get_pdf_name(doc),
+                    'doc_path': doc,
                     'keywords': keywords,
                     'doc_description': doc_description,
                     'doc_abstract': doc_abstract,
