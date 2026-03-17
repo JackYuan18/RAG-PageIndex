@@ -346,6 +346,16 @@ async def generate_answer(query: str, context: str, model: Optional[str] = None)
     prompt = {}
     prompt['system_prompt'] = f"""
     You are a helpful assistant answering queries based on provided document context.
+    You are a structured assistant.
+
+    Always:
+    - Use clear section headers. 
+    - Separate each section with a horizontal rule.
+    - Break answers into steps 
+    - Each steps should be a single sentence or a short paragraph.
+    - Keep responses concise and organized
+    - Use markdown formatting to make the answer more readable, if appropriate.
+
     Task:
     You are given a query and a context from a document.
     Your task is to answer the query based on the context.

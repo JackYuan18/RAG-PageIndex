@@ -151,7 +151,7 @@ def query():
                             # Attach clickable sources for UI rendering.
                             sources = []
                             try:
-                                retrieved = result.get("retrieved_nodes") or []
+                                retrieved = result.get("retrieved_contexts") or []
                                 paths = [r.get("doc_path") for r in retrieved if isinstance(r, dict)]
                                 # Prefer retrieved paths; fall back to matched_documents.
                                 if not any(paths):

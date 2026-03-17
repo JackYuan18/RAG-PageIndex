@@ -72,7 +72,7 @@ async def rag_query(query: str, model: Optional[str] = None, doc_index_path: Opt
         {
         "query": query,
         "matched_documents": matched_docs,
-        "retrieved_nodes": all_retrieved_nodes,
+        "retrieved_contexts": all_contexts,
         "context_length": len(combined_context),
         "answer": answer
     }
@@ -169,18 +169,21 @@ async def rag_query(query: str, model: Optional[str] = None, doc_index_path: Opt
     for i, doc_info in enumerate(all_node_maps):
         node_ids = all_retrieved_nodes[i]['node_ids']
         context = await extract_context(doc_info['node_map'], node_ids, doc_path=doc_info['path'], results_dir=RESULTS_DIR, project_root=PROJECT_ROOT)
-        all_contexts.append({
+        if len(context)>0:
+            all_contexts.append({
             'path': doc_info['path'],
             'context': context,
             'doc_path': doc_info['doc_path']
-        })
+            })
+        
         log(f"  Extracted {len(context)} characters from {os.path.basename(doc_info['path'])}")
-    
+    print(f"all_contexts length: {len(all_contexts)}")
     # Combine all contexts
     combined_context = "\n\n---\n\n".join([c['context'] for c in all_contexts])
     
     # Generate answer
     log("\nStep 5: Generating answer...")
+    log(f"combined_context: {combined_context}")
     answer = await generate_answer(query, combined_context, model=model)
     
     log("\n" + "=" * 80)
@@ -191,7 +194,7 @@ async def rag_query(query: str, model: Optional[str] = None, doc_index_path: Opt
     return {
         "query": query,
         "matched_documents": matched_docs,
-        "retrieved_nodes": all_retrieved_nodes,
+        "retrieved_contexts": all_contexts,
         "context_length": len(combined_context),
         "answer": answer
     }
@@ -241,7 +244,7 @@ def main():
         print(f"\n\nSummary:")
         print(f"  Query: {result['query']}")
         print(f"  Matched Documents: {len(result['matched_documents'])}")
-        print(f"  Total Retrieved Nodes: {sum(len(r['node_ids']) for r in result['retrieved_nodes'])}")
+        print(f"  Total Retrieved Contexts: {len(result['retrieved_contexts'])}")
         print(f"  Context Length: {result['context_length']} characters")
 
 

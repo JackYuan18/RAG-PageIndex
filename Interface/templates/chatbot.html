@@ -102,6 +102,24 @@
             line-height: 1.5;
         }
 
+        .message-bubble p {
+            margin: 0 0 10px 0;
+        }
+
+        .message-bubble p:last-child {
+            margin-bottom: 0;
+        }
+
+        .message-bubble .section-title {
+            font-weight: 700;
+            margin: 10px 0 6px;
+            color: #111827;
+        }
+
+        .message-bubble .section-title:first-child {
+            margin-top: 0;
+        }
+
         .message.user .message-bubble {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
@@ -341,8 +359,8 @@
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
                 </svg>
-                <h2>Welcome to PageIndex RAG</h2>
-                <p>Ask questions about your indexed documents</p>
+                <h2>Welcome to VTTI AI Chatbot</h2>
+                <p>Ask questions about VTTI research</p>
             </div>
         </div>
 
@@ -425,6 +443,45 @@
             autoResize(this);
         });
 
+        function escapeHtml(s) {
+            return String(s).replace(/[&<>"']/g, (c) => ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#39;',
+            }[c]));
+        }
+
+        function formatAnswerToHtml(text) {
+            // 1) Escape HTML to prevent injection
+            const escaped = escapeHtml(text || '');
+
+            // 2) Convert section headings
+            // - "## Heading" lines -> section title
+            // - "**Heading**:" (single line) -> section title
+            const withHeadings = escaped
+                .replace(/^##\s+(.+)$/gm, '<div class="section-title">$1</div>')
+                .replace(/^\*\*(.+?)\*\*:\s*$/gm, '<div class="section-title">$1</div>');
+
+            // 3) Convert paragraphs: blank lines separate paragraphs.
+            // Inside a paragraph, single newlines become <br>.
+            const blocks = withHeadings
+                .split(/\n\s*\n/g)
+                .map(b => b.trim())
+                .filter(Boolean);
+
+            return blocks
+                .map(b => {
+                    // If the whole block is a section-title div, don't wrap in <p>
+                    if (b.startsWith('<div class="section-title">') && b.endsWith('</div>')) {
+                        return b;
+                    }
+                    return `<p>${b.replace(/\n/g, '<br>')}</p>`;
+                })
+                .join('');
+        }
+
         function addMessage(content, isUser = false, info = '', sources = []) {
             // Remove empty state if it exists
             const emptyState = messagesContainer.querySelector('.empty-state');
@@ -437,7 +494,11 @@
             
             const bubbleDiv = document.createElement('div');
             bubbleDiv.className = 'message-bubble';
-            bubbleDiv.textContent = content;
+            if (isUser) {
+                bubbleDiv.textContent = content;
+            } else {
+                bubbleDiv.innerHTML = formatAnswerToHtml(content);
+            }
             
             messageDiv.appendChild(bubbleDiv);
 
@@ -534,7 +595,7 @@
 
         async function sendQuery() {
             const query = queryInput.value.trim();
-            const model = modelInput.value.trim() || 'ollama';  // Default to "ollama" if empty
+            const model = modelInput.value.trim() || 'qwen';  // Default to "qwen" if empty
             
             if (!query) {
                 return;
@@ -603,7 +664,9 @@
                                         addSystemMessage(`Error: ${result.error}`);
                                         statusText.textContent = 'Error';
                                     } else {
-                                        const info = `Matched ${result.matched_documents.length} document(s), Retrieved ${result.retrieved_nodes.reduce((sum, r) => sum + r.node_ids.length, 0)} node(s)`;
+                                        const matchedCount = (result.matched_documents || []).length;
+                                        const retrievedCount = (result.retrieved_contexts || []).length;
+                                        const info = `Matched ${matchedCount} document(s), Retrieved ${retrievedCount} context(s)`;
                                         addMessage(result.answer, false, info, result.sources || []);
                                         statusText.textContent = 'Ready';
                                     }
