@@ -5,72 +5,68 @@ from pageindex import *
 from pageindex.page_index_md import md_to_tree
 from collections import defaultdict
 def keywords_are_similar(kw1, kw2, model=None):
-    prompt = f"""Your are an expert in determining whether two keywords have similar meanings.
-    You are given two keywords: {kw1} and {kw2}.
-    
+    prompt = {}
+    prompt['system_prompt'] = f"""
+    You are an expert in determining whether two keywords have similar meanings.
     Return a boolen variable only.
     True if they are similar in meaning, False otherwise.
+    """
+    prompt['user_prompt'] = f"""
+    You are given two keywords: {kw1} and {kw2}.
+    Directly return the boolean variable.
+    
     """
 
     response = ChatGPT_API(model, prompt)
     return response
 
 def make_merged_keyword(kw1, kw2, model=None):
-    prompt = f"""Your are an expert in creating a concise new keyword which has the same or similar meaning as the two given keywords.
-    You are given two keywords: {kw1} and {kw2}.
-  
+    
+    prompt = {}
+    prompt['system_prompt'] = f"""
+    You are an expert in creating a concise new keyword which has the same or similar meaning as the two given keywords.
     Return the new keyword. The new keyword should have the least deviation from the two given keywords.
+    """
+    prompt['user_prompt'] = f"""
+    You are given two keywords: {kw1} and {kw2}.
+    Directly return the new keyword.
     """
     
     response = ChatGPT_API(model, prompt)
     return response
-def merge_keywords(keywords, doc_index, model=None):
-    # Use AI to determine and merge similar-meaning keywords with doc_index keys
-
-    # Assume an AI function exists:
-    #   def keywords_are_similar(kw1, kw2, model=None) -> bool
-    #   def make_merged_keyword(kw1, kw2, model=None) -> str
-    # For this code, assume the AI model can be passed as a parameter if needed.
-
-    # You can import your model in this file, or pass it as an argument if necessary.
-    
+def merge_keywords(keywords, doc_index, model=None): 
 
     updated_keywords = keywords.copy()
     updated_doc_index = doc_index.copy()
 
     for i, new_kw in enumerate(keywords):
-        for existing_kw in list(updated_doc_index.keys()):
+        for existing_kw in list(doc_index.keys()):
+            # print(f'new_kw: {new_kw}, existing_kw: {existing_kw}')
             # Use AI to determine whether similar in meaning
+            if new_kw == existing_kw:
+                continue
             if keywords_are_similar(new_kw, existing_kw, model=model)=='True':
                 print(f"similar: {new_kw} and {existing_kw}, {keywords_are_similar(new_kw, existing_kw, model=model)}")
                 # Use AI to create a concise merged keyword
                 merged_kw = make_merged_keyword(new_kw, existing_kw, model=model)
                 # Update doc_index (replace existing_kw with merged_kw, preserve value)
-                updated_doc_index[merged_kw] = updated_doc_index.pop(existing_kw)
+                updated_doc_index[merged_kw] = doc_index.pop(existing_kw)
                 # Update all occurrences in updated_keywords to merged_kw
-                updated_keywords[i] = merged_kw
-                
-         
+                updated_keywords[i] = merged_kw      
                 break
-        # If not merged with any existing, keep as is
-        # No action needed, will appear in updated_keywords
-
-    # Synchronize doc_index and updated_keywords variable in outer context if needed:
-    doc_index.clear()
-    doc_index.update(updated_doc_index)
-
+        
     # Remove duplicates and return
-    return updated_keywords, doc_index
+    return updated_keywords, updated_doc_index
 
 if __name__ == "__main__":
     # Set up argument parser
     parser = argparse.ArgumentParser(description='Process PDF or Markdown document and generate structure')
-    parser.add_argument('--pdf_path', type=str, default = '/home/zyuan/NSTSCE_Bot/NSTSCE/Database/Lightweight_Distributed_Gaussian_Process_Regression_for_Online_Machine_Learning.pdf', help='Path to the PDF file')
+    parser.add_argument('--pdf_path', type=str, default = '/home/zyuan/NSTSCE_Bot/NSTSCE/Database/Communication-aware_Distributed_Gaussian_Process_Regression_Algorithms_for_Real-time_Machine_Learning.pdf', help='Path to the PDF file')
     # parser.add_argument('--pdf_path', type=str, default = '/home/zyuan/NSTSCE_Bot/NSTSCE/Database/Communication-aware_Distributed_Gaussian_Process_Regression_Algorithms_for_Real-time_Machine_Learning.pdf', help='Path to the PDF file')
     parser.add_argument('--md_path', type=str, help='Path to the Markdown file')
 
     # parser.add_argument('--model', type=str, default='gpt-5.1', help='Model to use')
-    parser.add_argument('--model', type=str, default='ollama', help='Model to use')
+    parser.add_argument('--model', type=str, default='qwen', help='Model to use')
 
     parser.add_argument('--toc-check-pages', type=int, default=20, 
                       help='Number of pages to check for table of contents (PDF only)')
@@ -103,7 +99,7 @@ if __name__ == "__main__":
     
 
  
-    
+    print(f'Using model: {args.model}')
     # Validate that exactly one file type is specified
     if not args.pdf_path and not args.md_path:
         raise ValueError("Either --pdf_path or --md_path must be specified")
@@ -170,7 +166,7 @@ if __name__ == "__main__":
 
         merged_keywords, doc_index = merge_keywords(keywords, doc_index, model=args.model)
 
-        print(f'new doc_index: {doc_index}')
+        
         # Add new keywords to the DocIndex
         # Register each keyword in the DocIndex
         for kw in merged_keywords:
@@ -244,7 +240,7 @@ if __name__ == "__main__":
         print(f'Keywords: {keywords}')
         
         print('Updating DocIndex...')
-        doc_index_path = os.path.join(output_dir, "DocIndex")
+        doc_index_path = os.path.join(output_dir, "DocIndex.json")
         doc_index = {}
 
         # Try to load if exists

@@ -49,7 +49,6 @@ def process_pdf(pdf_path, output_dir, opt, doc_index, model):
                 # Parse string format
                 keywords = [kw.strip() for kw in keywords_value.split(',') if kw.strip()]
         
-        print(f'Keywords: {keywords}')
         
         if keywords:
             # Merge keywords with existing DocIndex
@@ -73,13 +72,13 @@ def process_pdf(pdf_path, output_dir, opt, doc_index, model):
             for kw in merged_keywords:
                 if output_file not in doc_index[kw]:  # Avoid duplicates
                     doc_index[kw].append(output_file)
-        
-        return True
+            # print(f'DocIndex: {doc_index}')
+        return True, doc_index
     except Exception as e:
         print(f"Error processing PDF {pdf_path}: {e}")
         import traceback
         traceback.print_exc()
-        return False
+        return False, doc_index
 
 def process_markdown(md_path, output_dir, opt, doc_index, model, args):
     """Process a single Markdown file and update DocIndex."""
@@ -176,7 +175,7 @@ if __name__ == "__main__":
     parser.add_argument('--database-dir', type=str, 
                        default='/home/zyuan/NSTSCE_Bot/PageIndex/Database',
                        help='Path to the Database directory containing documents')
-    parser.add_argument('--model', type=str, default='ollama', help='Model to use')
+    parser.add_argument('--model', type=str, default='qwen', help='Model to use')
     
     parser.add_argument('--toc-check-pages', type=int, default=20, 
                       help='Number of pages to check for table of contents (PDF only)')
@@ -210,7 +209,7 @@ if __name__ == "__main__":
                       help='Output directory for structure files and DocIndex')
     
     args = parser.parse_args()
-    
+    print(f'Using model: {args.model}')
     # Validate database directory
     if not os.path.isdir(args.database_dir):
         raise ValueError(f"Database directory not found: {args.database_dir}")
@@ -233,7 +232,7 @@ if __name__ == "__main__":
     
     # Initialize DocIndex
     output_dir = args.output_dir
-    doc_index_path = os.path.join(output_dir, "DocIndex")
+    doc_index_path = os.path.join(output_dir, "DocIndex.json")
     doc_index = defaultdict(list)
     
     # Try to load existing DocIndex
@@ -268,29 +267,35 @@ if __name__ == "__main__":
     # Process all PDF files
     pdf_success = 0
     pdf_failed = 0
+    failed_doc = []
     for pdf_path in pdf_files:
-        if process_pdf(pdf_path, output_dir, opt, doc_index, args.model):
+        success, doc_index = process_pdf(pdf_path, output_dir, opt, doc_index, args.model)
+        if success:
             pdf_success += 1
         else:
             pdf_failed += 1
-    
-    
-    
-    # Save the final DocIndex
-    print(f"\n{'='*80}")
-    print("Saving final DocIndex...")
-    print(f"{'='*80}")
-    
-    os.makedirs(output_dir, exist_ok=True)
-    with open(doc_index_path, "w", encoding="utf-8") as f:
-        json.dump(doc_index, f, indent=2, ensure_ascii=False)
-    
-    print(f'\nDocIndex saved to: {doc_index_path}')
-    print(f'Total keywords in DocIndex: {len(doc_index)}')
-    
-    # Print summary
-    print(f"\n{'='*80}")
-    print("SUMMARY")
-    print(f"{'='*80}")
-    print(f"PDF files: {pdf_success} succeeded, {pdf_failed} failed")
-    print(f"{'='*80}\n")
+            failed_doc.append(pdf_path)
+        # Save the final DocIndex
+        print(f"\n{'='*80}")
+        print("Saving final DocIndex...")
+        print(f"{'='*80}")
+        
+        os.makedirs(output_dir, exist_ok=True)
+        with open(doc_index_path, "w", encoding="utf-8") as f:
+            json.dump(doc_index, f, indent=2, ensure_ascii=False)
+        
+        print(f'\nDocIndex saved to: {doc_index_path}')
+        print(f'Total keywords in DocIndex: {len(doc_index)}')
+        
+        # Print summary
+        print(f"\n{'='*80}")
+        print("SUMMARY")
+        print(f"{'='*80}")
+        print(f"PDF files: {pdf_success} succeeded, {pdf_failed} failed")
+        print(f"{'='*80}\n")
+
+    # INSERT_YOUR_CODE
+    if pdf_failed > 0:
+        print("\nThe following PDF files failed to process:")
+        for pdf_path in failed_doc:
+            print(f"- {pdf_path}")

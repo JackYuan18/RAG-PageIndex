@@ -123,6 +123,31 @@
             padding: 0 5px;
         }
 
+        .message-sources {
+            margin-top: 10px;
+            padding: 10px 12px;
+            background: #f3f4f6;
+            border: 1px solid #e5e7eb;
+            border-radius: 10px;
+            font-size: 13px;
+            color: #374151;
+        }
+
+        .message-sources .sources-title {
+            font-weight: 600;
+            margin-bottom: 6px;
+            color: #111827;
+        }
+
+        .message-sources a {
+            color: #1d4ed8;
+            text-decoration: none;
+        }
+
+        .message-sources a:hover {
+            text-decoration: underline;
+        }
+
         .chatbot-input {
             padding: 20px 30px;
             background: white;
@@ -149,7 +174,7 @@
             position: relative;
         }
 
-        .model-input-wrapper input {
+        .model-input-wrapper select {
             width: 100%;
             padding: 10px 15px;
             border: 2px solid #e5e7eb;
@@ -159,13 +184,9 @@
             transition: border-color 0.3s;
         }
 
-        .model-input-wrapper input:focus {
+        .model-input-wrapper select:focus {
             outline: none;
             border-color: #667eea;
-        }
-
-        .model-input-wrapper input::placeholder {
-            color: #9ca3af;
         }
 
         .input-container {
@@ -307,7 +328,7 @@
     <div class="chatbot-container">
         <div class="chatbot-header">
             <div>
-                <h1>📚 PageIndex RAG Chatbot</h1>
+                <h1>📚 VTTI AI Chatbot</h1>
             </div>
             <div class="status-indicator">
                 <span class="status-dot"></span>
@@ -329,13 +350,12 @@
             <div class="model-input-container">
                 <label for="model-input">Model:</label>
                 <div class="model-input-wrapper">
-                    <input 
-                        type="text" 
-                        id="model-input" 
-                        value="ollama"
-                        placeholder="Enter model name (e.g., ollama, llama3.1:8b, gpt-4o-2024-11-20)"
-                        onkeydown="handleModelKeyDown(event)"
-                    />
+                    <select id="model-input">
+                        <option value="ollama">Ollama (local default)</option>
+                        <option value="qwen" selected>Qwen (via Ollama)</option>
+                        <option value="huggingface">HuggingFace Router</option>
+                        <option value="openai gpt">OpenAI GPT</option>
+                    </select>
                 </div>
             </div>
             <div class="input-container">
@@ -405,7 +425,7 @@
             autoResize(this);
         });
 
-        function addMessage(content, isUser = false, info = '') {
+        function addMessage(content, isUser = false, info = '', sources = []) {
             // Remove empty state if it exists
             const emptyState = messagesContainer.querySelector('.empty-state');
             if (emptyState) {
@@ -420,6 +440,30 @@
             bubbleDiv.textContent = content;
             
             messageDiv.appendChild(bubbleDiv);
+
+            if (!isUser && Array.isArray(sources) && sources.length > 0) {
+                const sourcesDiv = document.createElement('div');
+                sourcesDiv.className = 'message-sources';
+
+                const titleDiv = document.createElement('div');
+                titleDiv.className = 'sources-title';
+                titleDiv.textContent = 'Sources';
+                sourcesDiv.appendChild(titleDiv);
+
+                const listDiv = document.createElement('div');
+                for (const s of sources) {
+                    if (!s || !s.url) continue;
+                    const link = document.createElement('a');
+                    link.href = s.url;
+                    link.target = '_blank';
+                    link.rel = 'noopener noreferrer';
+                    link.textContent = s.name || s.url;
+                    listDiv.appendChild(link);
+                    listDiv.appendChild(document.createElement('br'));
+                }
+                sourcesDiv.appendChild(listDiv);
+                bubbleDiv.appendChild(sourcesDiv);
+            }
             
             if (info) {
                 const infoDiv = document.createElement('div');
@@ -560,7 +604,7 @@
                                         statusText.textContent = 'Error';
                                     } else {
                                         const info = `Matched ${result.matched_documents.length} document(s), Retrieved ${result.retrieved_nodes.reduce((sum, r) => sum + r.node_ids.length, 0)} node(s)`;
-                                        addMessage(result.answer, false, info);
+                                        addMessage(result.answer, false, info, result.sources || []);
                                         statusText.textContent = 'Ready';
                                     }
                                 } else if (data.type === 'error') {

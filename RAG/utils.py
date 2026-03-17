@@ -112,7 +112,7 @@ def load_document_structure(file_path: str, results_dir: Optional[str] = None, p
 def match_query_to_keywords(query: str, doc_index: Dict[str, List[str]], model: Optional[str] = None) -> List[str]:
     """
     Match query to keywords in DocIndex using LLM.
-    Returns list of document file paths that match the query.
+    Returns list of document file paths for the json tree files that match the query.
     """
     if not doc_index:
         return []
@@ -124,21 +124,26 @@ def match_query_to_keywords(query: str, doc_index: Dict[str, List[str]], model: 
         return []
     
     # Use LLM to find relevant keywords
-    prompt = f"""You are given a query and a list of keywords from a document index.
-        Your task is to identify which keywords are relevant to answering the query.
+    prompt = {}
+    prompt['system_prompt'] = f"""
+    You are a helpful assistant that identifies which keywords are relevant to answering a query.
 
-        Query: {query}
+    Task:
+    You are given a query and a list of keywords from a document index.
+    Your task is to identify which keywords are relevant to answering the query.
 
-        Keywords:
-        {json.dumps(keywords, indent=2)}
-
-        Please reply in the following JSON format:
-        {{
-            "thinking": "<Your thinking process on which keywords are relevant>",
-            "relevant_keywords": ["keyword1", "keyword2", ...]
-        }}
-
-Return ONLY the JSON object. Do not include any other text."""
+    IMPORTANT: You must reply in the following JSON format:
+    {{
+        "thinking": "<Your thinking process on which keywords are relevant>",
+        "relevant_keywords": ["keyword1", "keyword2", ...]
+    }}
+    Directly return the final JSON structure. Do not output anything else.
+    """
+    prompt['user_prompt'] = f"""
+    Query: {query}
+    Keywords: {json.dumps(keywords, indent=2)}
+    """
+    
 
     try:
         response = ChatGPT_API(model=model, prompt=prompt)
@@ -162,7 +167,7 @@ Return ONLY the JSON object. Do not include any other text."""
     return list(matched_docs)
 
 
-def create_node_mapping(tree: List[Dict[str, Any]], doc_path: Optional[str] = None) -> Dict[str, Dict[str, Any]]:
+def create_node_mapping(tree: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
     """
     Create a mapping from node_id to node for easy lookup.
     Handles both list and dict tree structures.
@@ -174,7 +179,7 @@ def create_node_mapping(tree: List[Dict[str, Any]], doc_path: Optional[str] = No
     def traverse(nodes, parent_id=None):
         nonlocal node_counter
         if isinstance(nodes, list):
-            for idx, node in enumerate(nodes):
+            for node in nodes:
                 if isinstance(node, dict):
                     # Generate node_id if missing
                     if 'node_id' not in node:
@@ -262,7 +267,9 @@ async def tree_search(query: str, tree: List[Dict[str, Any]], model: Optional[st
     # Remove text fields to reduce token usage
     tree_without_text = remove_fields(tree.copy(), fields=['text'])
     
-    search_prompt = f"""
+
+    prompt = {}
+    prompt['system_prompt'] = f"""
     You are given a question and a hierarchical tree structure of a document.
     The tree structure has parent nodes that may contain child nodes (nested in a "nodes" field).
     Each node contains a node id, node title, and a corresponding summary.
@@ -275,23 +282,22 @@ async def tree_search(query: str, tree: List[Dict[str, Any]], model: Optional[st
     3. You can select both parent and child nodes if both are relevant
     4. Consider the hierarchical relationship: parent nodes often provide overview, child nodes provide details
 
-    Question: {query}
-
-    Document tree structure:
-    {json.dumps(tree_without_text, indent=2)}
-
-    Please reply in the following JSON format:
+    IMPORTANT: You must reply in the following JSON format:
     {{
-        "thinking": "<Your thinking process on which nodes are relevant, including consideration of parent-child relationships>",
-        "node_list": ["node_id_1", "node_id_2", ..., "node_id_n"]
+        "thinking": "<Your thinking process on which nodes are relevant>",
+        "node_list": ["node_id1", "node_id2", ...]
     }}
-
-    Return the node_ids of all relevant nodes (both parents and children if relevant).
     Directly return the final JSON structure. Do not output anything else.
     """
+    prompt['user_prompt'] = f"""
+    Query: {query}
+    Document tree structure: {json.dumps(tree_without_text, indent=2)}
+    """
+
+    
 
     try:
-        response = await ChatGPT_API_async(model=model, prompt=search_prompt)
+        response = await ChatGPT_API_async(model=model, prompt=prompt)
         
         # Extract JSON from response
         result = extract_json(response)
@@ -337,55 +343,64 @@ async def extract_context(node_map: Dict[str, Dict[str, Any]], node_ids: List[st
 
 async def generate_answer(query: str, context: str, model: Optional[str] = None) -> str:
     """Generate answer based on query and context."""
-    answer_prompt = f"""You are a helpful assistant answering queries based on provided document context.
+    prompt = {}
+    prompt['system_prompt'] = f"""
+    You are a helpful assistant answering queries based on provided document context.
+    Task:
+    You are given a query and a context from a document.
+    Your task is to answer the query based on the context.
 
-User query: {query}
+    Instructions:
+    1. Answer the query directly and naturally, as if you're explaining to someone who asked
+    2. Use the context to provide specific details, examples, or explanations
+    3. If the query asks "how", explain the process or method
+    4. If the query asks "what", provide definitions or descriptions
+    5. If the query asks "why", explain reasons or motivations
+    6. Structure your answer to directly address what was asked
+    7. If information is not available in the context, acknowledge this but provide what you can
+    8. Write in a clear, natural, and conversational tone
+    9. Use the exact terminology and phrasing from the context when appropriate
 
-Relevant Context from Documents:
-{context}
-
-Instructions:
-1. Answer the query directly and naturally, as if you're explaining to someone who asked
-2. Use the context to provide specific details, examples, or explanations
-3. If the query asks "how", explain the process or method
-4. If the query asks "what", provide definitions or descriptions
-5. If the query asks "why", explain reasons or motivations
-6. Structure your answer to directly address what was asked
-7. If information is not available in the context, acknowledge this but provide what you can
-8. Write in a clear, natural, and conversational tone
-9. Use the exact terminology and phrasing from the context when appropriate
-
-Answer:"""
+    Directly return the final answer. Do not output anything else.
+    """
+    prompt['user_prompt'] = f"""
+    User query: {query}
+    Relevant Context from Documents: {context}
+    """
+    
 
     try:
-        response = await ChatGPT_API_async(model=model, prompt=answer_prompt)
+        response = await ChatGPT_API_async(model=model, prompt=prompt)
         return response.strip()
     except Exception as e:
         print(f"Error generating answer: {e}")
         return "Error generating answer."
 
 
-def extract_tree_and_node_map(structure: Dict[str, Any], doc_path: str, all_trees: List[Dict[str, Any]], all_node_maps: List[Dict[str, Any]]) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+def extract_tree_and_node_map(structure: Dict[str, Any], structure_path: str, all_trees: List[Dict[str, Any]], all_node_maps: List[Dict[str, Any]]) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """Extract tree structure and node mapping from document structure."""
    
     if structure:
         # Extract tree structure (handle different formats)
         if isinstance(structure, dict):
             tree = structure.get('structure', structure)
+            doc_path = structure.get('doc_path', structure_path)
         else:
             tree = structure
-        
+            doc_path = structure_path
         if tree:
             all_trees.append({
-                'path': doc_path,
-                'tree': tree
+                'path': structure_path,
+                'tree': tree,
+                'doc_path': doc_path
             })
-            node_map = create_node_mapping(tree, doc_path=doc_path)
+            node_map = create_node_mapping(tree)
             all_node_maps.append({
-                'path': doc_path,
-                'node_map': node_map
+                'path': structure_path,
+                'node_map': node_map,
+                'doc_path': doc_path
             })
-            print(f"  Loaded: {os.path.basename(doc_path)} ({len(node_map)} nodes)")
+            print(f"  Loaded: {os.path.basename(structure_path)} ({len(node_map)} nodes)")
     return all_trees, all_node_maps
 
 def print_retrieved_nodes(node_ids: List[str], node_map: Dict[str, Dict[str, Any]], return_text: bool = False) -> str:

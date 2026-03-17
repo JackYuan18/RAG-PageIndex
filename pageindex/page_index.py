@@ -25,9 +25,11 @@ async def check_title_appearance(item, page_list, start_index=1, model=None):
 
     CRITICAL JSON RULES:
     - Use double quotes (") for all strings
-    - Escape control characters: use \\n for newline, \\t for tab
+    - Escape control characters: use \n for newline, \t for tab
     - Keep "thinking" field SHORT (max 50 words)
     - Replace any newlines/tabs in strings with spaces or escape them
+    - DO NOT include escaped quotes like \\"
+
 
     VERIFICATION RULES:
     1. Check if the title appears ANYWHERE on the page
@@ -56,14 +58,9 @@ async def check_title_appearance(item, page_list, start_index=1, model=None):
 
     Title: "{title}"
     Page text: {page_text}
-    
     """
-
-   
-    
     response = await ChatGPT_API_async(model=model, prompt=prompt)
    
-
     response = extract_json(response)
     if 'answer' in response:
         answer = response['answer']
@@ -97,7 +94,7 @@ async def check_title_appearance_in_start(title, page_text, model=None, logger=N
     }}
     Directly return the final JSON structure. Do not output anything else."
     """
-    
+
     prompt['user_prompt'] = f"""
     
     Check if a section title appears at the BEGINNING of a page.
@@ -148,7 +145,10 @@ async def check_title_appearance_in_start_concurrent(structure, page_list, model
 
 
 def toc_detector_single_page(content, model=None):
-    prompt = f"""
+    
+    
+    prompt = {}
+    prompt['system_prompt'] = f"""
     Your job is to detect if there is a table of content provided in the given text.
 
     CRITICAL DEFINITION: A table of contents is a DEDICATED LISTING PAGE that shows:
@@ -166,38 +166,56 @@ def toc_detector_single_page(content, model=None):
 
     A research paper with section headings but NO dedicated TOC page should be detected as "no".
 
-    Given text: {content}
-
-    return the following JSON format:
+    Return the following JSON format:
     {{
         "thinking": <why do you think there is a table of content in the given text>
         "toc_detected": "<yes or no>",
     }}
 
     Directly return the final JSON structure. Do not output anything else.
-    Please note: abstract,summary, notation list, figure list, table list, etc. are not table of contents."""
+    Please note: abstract,summary, notation list, figure list, table list, etc. are not table of contents.
+    
+    """
 
+    prompt['user_prompt'] = f"""
+    Given text: {content}
 
+    """
     
     response = ChatGPT_API(model=model, prompt=prompt)
-    
+    # print(f'toc_detector_single_page response: {response}')
+    # INSERT_YOUR_CODE
+    # Check and remove any trailing comma in the response if present
+
+    response = re.sub(r',\s*([\]}])\s*$', r'\1', response)
+
     json_content = extract_json(response)    
+    # print(f'toc_detector_single_page response: {response}')
+    # print(f'toc_detector_single_page json_content: {json_content}')
     return json_content['toc_detected']
 
 
 def check_if_toc_extraction_is_complete(content, toc, model=None):
-    prompt = f"""
-    You are given a partial document  and a  table of contents.
-    Your job is to check if the  table of contents is complete, which it contains all the main sections in the partial document.
-
-    Reply format:
+    
+    
+    prompt = {}
+    prompt['system_prompt'] = f"""
+    You are a helpful assistant that checks if the table of contents is complete.
+    
+    You are given a partial document and a table of contents.
+    
+    We must reply in the following format:
     {{
         "thinking": <why do you think the table of contents is complete or not>
         "completed": "yes" or "no"
     }}
-    Directly return the final JSON structure. Do not output anything else."""
+    Directly return the final JSON structure. Do not output anything else.
+    """
 
-    prompt = prompt + '\n Document:\n' + content + '\n Table of contents:\n' + toc
+    prompt['user_prompt'] = f"""
+    Document: {content}
+    Table of contents: {toc}
+    """
   
     
     
@@ -211,11 +229,14 @@ def check_if_toc_extraction_is_complete(content, toc, model=None):
 
 
 def check_if_toc_transformation_is_complete(content, toc, model=None):
-    prompt = f"""
-    You are given a raw table of contents and a  table of contents.
-    Your job is to check if the  table of contents is complete.
-
-    Reply format:
+    
+    prompt = {}
+    prompt['system_prompt'] = f"""
+    You are a helpful assistant that checks if the cleaned table of contents is complete.
+    
+    You are given a raw table of contents and a cleaned table of contents.
+    
+    We must reply in the following format:
     {{
         "thinking": <why do you think the cleaned table of contents is complete or not>
         "completed": "yes" or "no"
@@ -229,37 +250,43 @@ def check_if_toc_transformation_is_complete(content, toc, model=None):
     
     """
 
-    prompt = prompt + '\n Raw Table of contents:\n' + content + '\n Cleaned Table of contents:\n' + toc
+    prompt['user_prompt'] = f"""
+    Raw Table of contents: {content}
+    Cleaned Table of contents: {toc}
+    """
     
     
     response = ChatGPT_API(model=model, prompt=prompt)
     json_content = extract_json(response)
-    return json_content['completed']
+    return json_content['completed'], json_content['thinking']
 
 def extract_toc_content(content, model=None):
-    prompt = f"""
-    Your job is to extract the full table of contents from the given text, replace ... with :
+    
+    prompt = {}
+    prompt['system_prompt'] = f"""
+    You are a helpful assistant that extracts the full table of contents from the given text.
+    Replace ... with ... in the given text.
 
+    Directly return the full table of contents content. Do not output anything else. """
+
+    prompt['user_prompt'] = f"""
     Given text: {content}
-
-    Directly return the full table of contents content. Do not output anything else."""
-
-
+    """
     
     response, finish_reason = ChatGPT_API_with_finish_reason(model=model, prompt=prompt)
     
-    if_complete = check_if_toc_transformation_is_complete(content, response, model)
+    if_complete,_ = check_if_toc_transformation_is_complete(content, response, model)
     if if_complete == "yes" and finish_reason == "finished":
         return response
     
     chat_history = [
-        {"role": "user", "content": prompt}, 
+        {"role": "user", "content": prompt['user_prompt']}, 
         {"role": "assistant", "content": response},    
     ]
     prompt = f"""please continue the generation of table of contents , directly output the remaining part of the structure"""
     new_response, finish_reason = ChatGPT_API_with_finish_reason(model=model, prompt=prompt, chat_history=chat_history)
     response = response + new_response
-    if_complete = check_if_toc_transformation_is_complete(content, response, model)
+    if_complete, _ = check_if_toc_transformation_is_complete(content, response, model)
     
     while not (if_complete == "yes" and finish_reason == "finished"):
         chat_history = [
@@ -277,27 +304,82 @@ def extract_toc_content(content, model=None):
     
     return response
 
-def detect_page_index(toc_content, model=None):
+def detect_page_index(toc_content, model=None,logger=None):
     print('start detect_page_index')
-    prompt = f"""
-    You will be given a table of contents.
+    
 
-    Your job is to detect if there are page numbers/indices given within the table of contents.
+    prompt = {}
+    prompt['system_prompt'] = f"""
+    You are a strict classifier that decides whether a TABLE OF CONTENTS already contains page numbers.
 
-    Given text: {toc_content}
+    TASK:
+    You will be given only the TOC text. Determine if it contains PAGE NUMBERS (not other types of numbers).
 
-    Reply format:
+    -WHAT ARE PAGE NUMBERS:
+    Page numbers in a TOC are:
+    - Small integers (typically 1-500 for most documents)
+    - Located at the RIGHT END of lines (often aligned in a column)
+    - Separated from section titles by dots, spaces, or alignment: "Section Title .......... 5"
+    - Usually appear on MOST lines of the TOC
+    - May include Roman numerals for front matter (i, ii, iii, iv, v, etc.)
+
+    WHAT ARE NOT PAGE NUMBERS (COMMON FALSE POSITIVES):
+    - Reference citations: "(refer to SAE J2808)", "ISO 12345", "IEEE 802.11"
+    - Section numbers: "1.2.3", "Chapter 5", "Section 2.1"
+    - Dates: "2024", "1999", "March 15"
+    - Standards/Regulations: "J2808", "802.11", "ISO 9001"
+    - Large numbers: "2808", "12345", "80211" (unless clearly sequential page numbers)
+    - Numbers in parentheses at end: "(J2808)", "(2024)", "(Section 2.1)"
+    - Numbers that are part of section titles: "Chapter 5", "Part 3"
+
+    DETECTION RULES:
+    1. Look for a PATTERN: Do MOST lines end with small integers (1-500) or Roman numerals?
+    2. Check FORMATTING: Are numbers separated from titles by dots/spaces/alignment?
+    3. Check SEQUENCE: Do numbers appear sequential or near-sequential?
+    4. IGNORE: Numbers in parentheses, large numbers (>1000), alphanumeric codes (like "J2808")
+
+    EXAMPLES:
+
+    GOOD (has page numbers):
+    "INTRODUCTION ................ 1
+    METHODS ...................... 5
+    RESULTS ..................... 10"
+
+    BAD (no page numbers - just section numbers):
+    "1. INTRODUCTION
+    2. METHODS
+    3. RESULTS"
+
+    BAD (has reference citations, not page numbers):
+    "Introduction (refer to SAE J2808)
+    Methods (ISO 12345)
+    Results (IEEE 802.11)"
+
+    OUTPUT FORMAT (MUST BE VALID JSON):
     {{
-        "thinking": <why do you think there are page numbers/indices given within the table of contents>
-        "page_index_given_in_toc": "<yes or no>"
+    "thinking": "<brief explanation of your decision>",
+    "page_index_given_in_toc": "yes" or "no"
     }}
-    Directly return the final JSON structure. Do not output anything else."""
+
+    HARD RULES:
+    - "page_index_given_in_toc" MUST be exactly "yes" or "no"
+    - If numbers are citations, standards, or section numbers → answer "no"
+    - Only answer "yes" if you see a clear pattern of page numbers (small integers, right-aligned, sequential)
+    - Output ONLY the JSON object. No extra text, no markdown, no explanations outside JSON.
+    """
+
+    prompt['user_prompt'] = f"""
+    Given text: {toc_content}
+    """
+
+
 
     response = ChatGPT_API(model=model, prompt=prompt)
     json_content = extract_json(response)
+    logger.info(f'toc_content: {toc_content}, detect_page_index response: {json_content}')
     return json_content['page_index_given_in_toc']
 
-def toc_extractor(page_list, toc_page_list, model):
+def toc_extractor(page_list, toc_page_list, model,logger=None):
     def transform_dots_to_colon(text):       # change dots to colon for better readability
         text = re.sub(r'\.{5,}', ': ', text)
         # Handle dots separated by spaces
@@ -308,7 +390,7 @@ def toc_extractor(page_list, toc_page_list, model):
     for page_index in toc_page_list:
         toc_content += page_list[page_index][0]
     toc_content = transform_dots_to_colon(toc_content)
-    has_page_index = detect_page_index(toc_content, model=model)
+    has_page_index = detect_page_index(toc_content, model=model,logger=logger)
     
     return {
         "toc_content": toc_content,
@@ -320,8 +402,13 @@ def toc_extractor(page_list, toc_page_list, model):
 
 def toc_index_extractor(toc, content, model=None):
     print('start toc_index_extractor')
-    tob_extractor_prompt = """
-    You are matching section titles to their page locations in a document.
+    prompt = {}
+    prompt['system_prompt'] = f"""
+    You are a JSON formatter. Your ONLY job is to output valid JSON.
+    Do not explain, do not comment, do not add any text outside the JSON.
+
+    Task:
+    Match section titles to their page locations in a document.
 
     CRITICAL MATCHING RULES:
     1. Find the EXACT page where each section TITLE appears
@@ -348,16 +435,17 @@ def toc_index_extractor(toc, content, model=None):
 
     Output format:
     [
-        {"structure": "1", "title": "Introduction", "physical_index": "<physical_index_3>"},
-        {"structure": "1.1", "title": "Background", "physical_index": "<physical_index_4>"},
-        {"structure": "1.2", "title": "Related Work"}  ← No physical_index if not found
+        {{"structure": "1", "title": "Introduction", "physical_index": "<physical_index_3>"}},
+        {{"structure": "1.1", "title": "Background", "physical_index": "<physical_index_4>"}},
+        {{"structure": "1.2", "title": "Related Work"}}  ← No physical_index if not found
     ]
 
     Output ONLY the JSON array, nothing else."""
 
-    prompt = tob_extractor_prompt + '\nTable of contents:\n' + str(toc) + '\nDocument pages:\n' + content
-    
-    
+    prompt['user_prompt'] = f"""
+    Table of contents: {toc}
+    Document pages: {content}
+    """
     
     response = ChatGPT_API(model=model, prompt=prompt)
     json_content = extract_json(response)    
@@ -365,64 +453,91 @@ def toc_index_extractor(toc, content, model=None):
 
 
 
-def toc_transformer(toc_content, model=None):
+def toc_transformer(toc_content, model=None, logger=None):
     print('start toc_transformer')
-    init_prompt = """
+    
+    prompt = {}
+    prompt['system_prompt'] = f"""
     You are a JSON formatter. Your ONLY job is to output valid JSON.
     Do not explain, do not comment, do not add any text outside the JSON.
+    
+    Your task is to continue the table of contents json structure, directly output the remaining part of the json structure.
+
     
     You are given a table of contents, You job is to transform the whole table of content into a JSON format included table_of_contents.
 
     structure is the numeric system which represents the index of the hierarchy section in the table of contents. For example, the first section has structure index 1, the first subsection has structure index 1.1, the second subsection has structure index 1.2, etc.
 
     The response should be in the following JSON format: 
-    {
+    {{
     "table_of_contents": [
-        {
+        {{
             "structure": <structure index, "x.x.x" or None> (string),
             "title": <title of the section>,
             "page": <page number or None>,
-        },
+        }},
         ...
         ],
-    }
+    }}
     IMPORTANT: You should transform the full table of contents in one go.
     Directly return the final JSON structure as specified in the format.
     Do not output anything else. """
 
-    prompt = init_prompt + '\n Given table of contents\n:' + toc_content
+    prompt['user_prompt'] = f"""
+    Given table of contents: {toc_content}
+    """
 
 
     
     last_complete, finish_reason = ChatGPT_API_with_finish_reason(model=model, prompt=prompt)
     
-    if_complete = check_if_toc_transformation_is_complete(toc_content, last_complete, model)
+    if_complete,_ = check_if_toc_transformation_is_complete(toc_content, last_complete, model)
     if if_complete == "yes" and finish_reason == "finished":
-        print(f'toc_transformer response: {last_complete}')
+        # print(f'toc_transformer response: {last_complete}')
         last_complete = extract_json(last_complete)
         
         cleaned_response=convert_page_to_int(last_complete['table_of_contents'])
         return cleaned_response
-    
+    print('Done for the first part')
+    cnt = 1
     last_complete = get_json_content(last_complete)
-    while not (if_complete == "yes" and finish_reason == "finished"):
+    while not (if_complete == "yes" and finish_reason == "finished") and cnt < 20:
+        cnt += 1
+        # print(f'Working on the {cnt}th part')
+        # print(f'last_complete: {last_complete}, finish_reason: {finish_reason}, if_complete: {if_complete}, thinking: {_}')
         position = last_complete.rfind('}')
         if position != -1:
             last_complete = last_complete[:position+2]
-        prompt = f"""
-        Your task is to continue the table of contents json structure, directly output the remaining part of the json structure.
-        The response should be in the following JSON format: 
-
-        The raw table of contents json structure is:
-        {toc_content}
-
-        The incomplete transformed table of contents json structure is:
-        {last_complete}
-
-        Please continue the json structure, directly output the remaining part of the json structure."""
-
         
+        prompt = {}
+        prompt['system_prompt'] = f"""
+        You are a JSON formatter. Your ONLY job is to output valid JSON.
+        Do not explain, do not comment, do not add any text outside the JSON.
+
+        Task:
+        You are given a raw table of contents and a incomplete transformed table of contents json structure.
+        Continue the table of contents json structure, directly output the remaining part of the json structure.
         
+        REQUIRED JSON FORMAT:
+        {{
+        "table_of_contents": [
+            {{
+                "structure": <structure index, "x.x.x" or None> (string),
+                "title": <title of the section>,
+                "page": <page number or None>,
+            }},
+            ...
+            ],
+        }}"""
+
+        prompt['user_prompt'] = f"""
+        Raw table of contents: {toc_content}
+        
+        Incomplete transformed table of contents json structure: {last_complete}
+        
+        Please continue the json structure, directly output the remaining part of the json structure.
+        """
+ 
         
         new_complete, finish_reason = ChatGPT_API_with_finish_reason(model=model, prompt=prompt)
         
@@ -431,9 +546,11 @@ def toc_transformer(toc_content, model=None):
             new_complete =  get_json_content(new_complete)
             last_complete = last_complete+new_complete
 
-        if_complete = check_if_toc_transformation_is_complete(toc_content, last_complete, model)
-        
-
+        if_complete,_ = check_if_toc_transformation_is_complete(toc_content, last_complete, model)
+        logger.info(f'toc_content: {toc_content}')
+        logger.info(f'toc_transformer new_complete: {new_complete}, if_complete: {if_complete}, thinking: {_}')
+    if cnt >= 20:
+        raise Exception('toc_transformer failed to complete')
     last_complete = json.loads(last_complete)
 
     cleaned_response=convert_page_to_int(last_complete['table_of_contents'])
@@ -498,12 +615,13 @@ def extract_matching_page_pairs(toc_page, toc_physical_index, start_page_index):
 def calculate_page_offset(pairs):
     differences = []
     for pair in pairs:
-        try:
+        try:  
             physical_index = pair['physical_index']
             page_number = pair['page']
             difference = physical_index - page_number
             differences.append(difference)
         except (KeyError, TypeError):
+            print(f'KeyError: {KeyError}, TypeError: {TypeError}')
             continue
     
     if not differences:
@@ -518,6 +636,8 @@ def calculate_page_offset(pairs):
     return most_common
 
 def add_page_offset_to_toc_json(data, offset):
+    if offset is None:
+        offset = 0
     for i in range(len(data)):
         if data[i].get('page') is not None and isinstance(data[i]['page'], int):
             data[i]['physical_index'] = data[i]['page'] + offset
@@ -563,29 +683,50 @@ def page_list_to_group_text(page_contents, token_lengths, max_tokens=20000, over
     return subsets
 
 def add_page_number_to_toc(part, structure, model=None):
-    fill_prompt_seq = """
-    You are given an JSON structure of a document and a partial part of the document. Your task is to check if the title that is described in the structure is started in the partial given document.
+    prompt = {}
+    prompt['system_prompt'] = f"""
+    You are a JSON formatter. Your ONLY job is to output valid JSON.
+    Do not explain, do not comment, do not add any text outside the JSON.
+
+
+    Task:
+    You are given an JSON structure of a document and a partial part of the document. 
+    Your task is to check if the title that is described in the structure is started in the partial given document.
 
     The provided text contains tags like <physical_index_X> and <physical_index_X> to indicate the physical location of the page X. 
 
-    If the full target section starts in the partial given document, insert the given JSON structure with the "start": "yes", and "start_index": "<physical_index_X>".
+    CRITICAL REQUIREMENTS:
+    1. The "physical_index" field MUST ALWAYS be present in every JSON object
+    2. If the full target section starts in the partial given document:
+       - Set "start": "yes"
+       - Set "physical_index": "<physical_index_X>" (use the exact tag format from the document)
+    3. If the full target section does NOT start in the partial given document:
+       - Set "start": "no"
+       - Set "physical_index": null (use null, not None, not missing)
 
-    If the full target section does not start in the partial given document, insert "start": "no",  "start_index": None.
-
-    The response should be in the following format. 
+    REQUIRED JSON FORMAT:
         [
-            {
+            {{
                 "structure": <structure index, "x.x.x" or None> (string),
                 "title": <title of the section>,
                 "start": "<yes or no>",
-                "physical_index": "<physical_index_X> (keep the format)" or None
-            },
+                "physical_index": "<physical_index_X> (keep the format)" or None (MUST BE PRESENT - never omit this field)
+            }},
             ...
         ]    
-    The given structure contains the result of the previous part, you need to fill the result of the current part, do not change the previous result.
-    Directly return the final JSON structure. Do not output anything else."""
+    IMPORTANT:
+    - Every object MUST have the "physical_index" field
+    - Use null (not None, not missing) when section is not found
+    - Keep the exact format "<physical_index_X>" when found
+    - The given structure contains results from previous parts - preserve them and only add results for the current part
+    - Do not change previous results, only add new ones
 
-    prompt = fill_prompt_seq + f"\n\nCurrent Partial Document:\n{part}\n\nGiven Structure\n{json.dumps(structure, indent=2)}\n"
+    Output ONLY the complete JSON array, nothing else."""
+
+    prompt['user_prompt'] = f"""
+    Current Partial Document: {part}
+    Given Structure: {json.dumps(structure, indent=2)}
+    """
 
     current_json_raw = ChatGPT_API(model=model, prompt=prompt)
     
@@ -612,7 +753,8 @@ def remove_first_physical_index_section(text):
 ### add verify completeness
 def generate_toc_continue(toc_content, part, model="gpt-4o-2024-11-20"):
     print('start generate_toc_continue')
-    prompt = """
+    prompt = {}
+    prompt['system_prompt'] = f"""
         You are a JSON formatter. Your ONLY job is to output valid JSON.
 
         CRITICAL JSON RULES:
@@ -621,7 +763,7 @@ def generate_toc_continue(toc_content, part, model="gpt-4o-2024-11-20"):
         3. Replace newlines/tabs in titles with spaces
         4. Output ONLY the JSON array - no explanations, no markdown
 
-        Task: Continue the tree structure from previous part.
+        Task: Continue the tree structure from previous part using the given text.
 
         Structure format: numeric hierarchy (e.g., "1", "1.1", "1.2")
         Title: Extract original title, replace newlines/tabs with spaces
@@ -629,12 +771,15 @@ def generate_toc_continue(toc_content, part, model="gpt-4o-2024-11-20"):
 
         Output format (valid JSON only):
         [
-            {"structure": "2", "title": "Section Title", "physical_index": "<physical_index_5>"},
-            {"structure": "2.1", "title": "Subsection", "physical_index": "<physical_index_6>"}
+            {{"structure": "2", "title": "Section Title", "physical_index": "<physical_index_5>"}},
+            {{"structure": "2.1", "title": "Subsection Title", "physical_index": "<physical_index_6>"}}
         ]
 
         Output ONLY the additional JSON array items, nothing else."""
-    prompt = prompt + '\nGiven text\n:' + part + '\nPrevious tree structure\n:' + json.dumps(toc_content, indent=2)
+    prompt['user_prompt'] = f"""
+    Given text: {part}
+    Previous tree structure: {json.dumps(toc_content, indent=2)}
+    """
 
 
     
@@ -648,49 +793,39 @@ def generate_toc_continue(toc_content, part, model="gpt-4o-2024-11-20"):
 ### add verify completeness
 def generate_toc_init(part, model=None):
     print('start generate_toc_init')
-    prompt = """
-    You are extracting section titles from a document to create a table of contents.
+    prompt = {}
+    prompt['system_prompt'] = f"""
+        You are a JSON formatter. Your ONLY job is to output valid JSON.
 
-    CRITICAL RULES:
-    1. Extract ONLY section/chapter HEADINGS, not paragraph text
-    2. Section titles are typically:
-    - Short (usually 1-10 words)
-    - Appear at the start of sections
-    - Often formatted differently (bold, larger font, centered)
-    - May have numbers/letters (e.g., "I.", "A.", "1.", "1.1")
-    3. Do NOT extract:
-    - Full sentences from paragraphs
-    - Long descriptive text
-    - Content within sections
-    4. Keep titles concise - extract the main heading only
+        CRITICAL JSON RULES:
+        1. Use double quotes (") for ALL strings. NEVER use single quotes.
+        2. Escape special characters in string values (\\n for newline, \\t for tab, \\" for quote)
+        3. Replace newlines/tabs in titles with spaces
+        4. Output ONLY the JSON array - no explanations, no markdown
 
-    JSON OUTPUT RULES:
-    - Use double quotes (") for all strings
-    - Replace newlines/tabs in titles with spaces
-    - Escape special characters properly
-    - Output ONLY valid JSON array
+        Task: From the given text, extract ONLY section or chapter HEADINGS to build a table of contents.
 
-    Structure format: hierarchical numbers (e.g., "1", "1.1", "1.2")
-    Title: Extract the section heading ONLY (short, 1-10 words typically)
-    Physical index: Find the <physical_index_X> tag where the section STARTS
+        Structure format: numeric hierarchy (e.g., "1", "1.1", "1.2")
+        
+        Title: Extract original title, replace newlines/tabs with spaces
+        Physical index: Extract from <physical_index_X> tags
 
-    Example of good extraction:
-    Input: "I. INTRODUCTION\nThis paper discusses..."
-    Output: {"structure": "1", "title": "INTRODUCTION", "physical_index": "<physical_index_1>"}
+        Output format (valid JSON only):
+        [
+            {{"structure": "1", "title": "Section Title", "physical_index": "<physical_index_1>"}},
+            {{"structure": "1.1", "title": "Subsection Title", "physical_index": "<physical_index_2>"}}
+        ]
 
-    Example of bad extraction:
-    Input: "I. INTRODUCTION\nThis paper discusses..."
-    Output: {"structure": "1", "title": "INTRODUCTION This paper discusses...", ...}  ← TOO LONG
+        Output ONLY the JSON array items, nothing else.
 
-    Output format:
-    [
-        {"structure": "1", "title": "Section Title", "physical_index": "<physical_index_1>"},
-        {"structure": "1.1", "title": "Subsection", "physical_index": "<physical_index_2>"}
-    ]
+        You are a strict JSON generator.
 
-    Output ONLY the JSON array, nothing else."""
 
-    prompt = prompt + '\nGiven text\n:' + part
+"""
+
+    prompt['user_prompt'] = f"""
+    Given text: {part}
+    """
     
     response, finish_reason = ChatGPT_API_with_finish_reason(model=model, prompt=prompt)
    
@@ -710,6 +845,7 @@ def process_no_toc(page_list, start_index=1, model=None, logger=None):
     logger.info(f'len(group_texts): {len(group_texts)}')
 
     toc_with_page_number= generate_toc_init(group_texts[0], model)
+    logger.info(f'generate_toc_init: {toc_with_page_number}')
     for group_text in group_texts[1:]:
         toc_with_page_number_additional = generate_toc_continue(toc_with_page_number, group_text, model)    
         toc_with_page_number.extend(toc_with_page_number_additional)
@@ -723,7 +859,7 @@ def process_no_toc(page_list, start_index=1, model=None, logger=None):
 def process_toc_no_page_numbers(toc_content, toc_page_list, page_list,  start_index=1, model=None, logger=None):
     page_contents=[]
     token_lengths=[]
-    toc_content = toc_transformer(toc_content, model)
+    toc_content = toc_transformer(toc_content, model, logger)
     logger.info(f'toc_transformer: {toc_content}')
     for page_index in range(start_index, start_index+len(page_list)):
         page_text = f"<physical_index_{page_index}>\n{page_list[page_index-start_index][0]}\n<physical_index_{page_index}>\n\n"
@@ -746,7 +882,8 @@ def process_toc_no_page_numbers(toc_content, toc_page_list, page_list,  start_in
 
 
 def process_toc_with_page_numbers(toc_content, toc_page_list, page_list, toc_check_page_num=None, model=None, logger=None):
-    toc_with_page_number = toc_transformer(toc_content, model)
+    
+    toc_with_page_number = toc_transformer(toc_content, model, logger)
     logger.info(f'toc_with_page_number: {toc_with_page_number}')
 
     toc_no_page_number = remove_page_number(copy.deepcopy(toc_with_page_number))
@@ -810,6 +947,7 @@ def process_none_page_numbers(toc_items, page_list, start_index=1, model=None):
             item_copy = copy.deepcopy(item)
             del item_copy['page']
             result = add_page_number_to_toc(page_contents, item_copy, model)
+            print(f'result: {result}')
             if isinstance(result[0]['physical_index'], str) and result[0]['physical_index'].startswith('<physical_index'):
                 item['physical_index'] = int(result[0]['physical_index'].split('_')[-1].rstrip('>').strip())
                 del item['page']
@@ -819,14 +957,15 @@ def process_none_page_numbers(toc_items, page_list, start_index=1, model=None):
 
 
 
-def check_toc(page_list, opt=None):
+def check_toc(page_list, opt=None,logger=None):
     toc_page_list = find_toc_pages(start_page_index=0, page_list=page_list, opt=opt)
     if len(toc_page_list) == 0:
         print('no toc found')
         return {'toc_content': None, 'toc_page_list': [], 'page_index_given_in_toc': 'no'}
     else:
         print('toc found')
-        toc_json = toc_extractor(page_list, toc_page_list, opt.model)
+        logger.info(f'toc_page_list: {toc_page_list}')
+        toc_json = toc_extractor(page_list, toc_page_list, opt.model, logger=logger)
 
         if toc_json['page_index_given_in_toc'] == 'yes':
             print('index found')
@@ -847,7 +986,7 @@ def check_toc(page_list, opt=None):
                 if len(additional_toc_pages) == 0:
                     break
 
-                additional_toc_json = toc_extractor(page_list, additional_toc_pages, opt.model)
+                additional_toc_json = toc_extractor(page_list, additional_toc_pages, opt.model, logger)
                 if additional_toc_json['page_index_given_in_toc'] == 'yes':
                     print('index found')
                     return {'toc_content': additional_toc_json['toc_content'], 'toc_page_list': additional_toc_pages, 'page_index_given_in_toc': 'yes'}
@@ -864,7 +1003,9 @@ def check_toc(page_list, opt=None):
 
 ################### fix incorrect toc #########################################################
 def single_toc_item_index_fixer(section_title, content, model="gpt-4o-2024-11-20"):
-    tob_extractor_prompt = """
+    prompt = {}
+    prompt['system_prompt'] = f"""
+    You are a JSON formatter. Your ONLY job is to output valid JSON.
     You are given a section title and several pages of a document, your job is to find the physical index of the start page of the section in the partial document.
 
     The provided pages contains tags like <physical_index_X> and <physical_index_X> to indicate the physical location of the page X.
@@ -876,7 +1017,10 @@ def single_toc_item_index_fixer(section_title, content, model="gpt-4o-2024-11-20
     }
     Directly return the final JSON structure. Do not output anything else."""
 
-    prompt = tob_extractor_prompt + '\nSection Title:\n' + str(section_title) + '\nDocument pages:\n' + content
+    prompt['user_prompt'] = f"""
+    Section Title: {section_title}
+    Document pages: {content}
+    """
 
 
     
@@ -1124,6 +1268,21 @@ async def meta_processor(page_list, mode=None, toc_content=None, toc_page_list=N
         elif mode == 'process_toc_no_page_numbers':
             return await meta_processor(page_list, mode='process_no_toc', start_index=start_index, opt=opt, logger=logger)
         else:
+            # INSERT_YOUR_CODE
+            # Save toc_with_page_number to a JSON file for debugging
+            debug_file_path = "debug/toc_with_page_number_debug.json"
+            try:
+                with open(debug_file_path, "w", encoding="utf-8") as f:
+                    json.dump(toc_with_page_number, f, ensure_ascii=False, indent=2)
+                if logger:
+                    logger.info(f"toc_with_page_number saved to {debug_file_path}")
+                else:
+                    print(f"toc_with_page_number saved to {debug_file_path}")
+            except Exception as e:
+                if logger:
+                    logger.error(f"Failed to save toc_with_page_number to file: {e}")
+                else:
+                    print(f"Failed to save toc_with_page_number to file: {e}")
             raise Exception('Processing failed')
         
  
@@ -1157,7 +1316,7 @@ async def process_large_node_recursively(node, page_list, opt=None, logger=None)
     return node
 
 async def tree_parser(page_list, opt, doc=None, logger=None):
-    check_toc_result = check_toc(page_list, opt)
+    check_toc_result = check_toc(page_list, opt, logger=logger)
     logger.info(check_toc_result)
 
     if check_toc_result.get("toc_content") and check_toc_result["toc_content"].strip() and check_toc_result["page_index_given_in_toc"] == "yes":

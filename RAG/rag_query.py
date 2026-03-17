@@ -53,7 +53,7 @@ load_dotenv()
 # Configuration - paths relative to project root
 PROJECT_ROOT = project_root
 RESULTS_DIR = os.path.join(PROJECT_ROOT, 'results')
-DOCINDEX_PATH = os.path.join(RESULTS_DIR, 'DocIndex')
+DOCINDEX_PATH = os.path.join(RESULTS_DIR, 'DocIndex.json')
 
 
 
@@ -68,7 +68,14 @@ async def rag_query(query: str, model: Optional[str] = None, doc_index_path: Opt
         progress_callback: Optional callback function(message: str) to receive progress updates
     
     Returns:
-        Dictionary with query results including matched docs, retrieved nodes, and answer
+        Dictionary with query results 
+        {
+        "query": query,
+        "matched_documents": matched_docs,
+        "retrieved_nodes": all_retrieved_nodes,
+        "context_length": len(combined_context),
+        "answer": answer
+    }
     """
     def log(message):
         """Log message to both callback and print."""
@@ -112,9 +119,9 @@ async def rag_query(query: str, model: Optional[str] = None, doc_index_path: Opt
     
     all_trees = []
     all_node_maps = []
-    for doc_path in matched_docs:
-        structure = load_document_structure(doc_path, results_dir=RESULTS_DIR, project_root=PROJECT_ROOT)
-        all_trees, all_node_maps = extract_tree_and_node_map(structure, doc_path, all_trees, all_node_maps)
+    for structure_path in matched_docs:
+        structure = load_document_structure(structure_path, results_dir=RESULTS_DIR, project_root=PROJECT_ROOT)
+        all_trees, all_node_maps = extract_tree_and_node_map(structure, structure_path, all_trees, all_node_maps)
         
     
     if not all_trees:
@@ -151,7 +158,8 @@ async def rag_query(query: str, model: Optional[str] = None, doc_index_path: Opt
         all_retrieved_nodes.append({
             'path': doc_info['path'],
             'node_ids': node_ids,
-            'thinking': thinking
+            'thinking': thinking,
+            'doc_path': doc_info['doc_path']
         })
     
     # Extract context from retrieved nodes
@@ -163,7 +171,8 @@ async def rag_query(query: str, model: Optional[str] = None, doc_index_path: Opt
         context = await extract_context(doc_info['node_map'], node_ids, doc_path=doc_info['path'], results_dir=RESULTS_DIR, project_root=PROJECT_ROOT)
         all_contexts.append({
             'path': doc_info['path'],
-            'context': context
+            'context': context,
+            'doc_path': doc_info['doc_path']
         })
         log(f"  Extracted {len(context)} characters from {os.path.basename(doc_info['path'])}")
     
@@ -211,7 +220,7 @@ def main():
         else:
             DOCINDEX_PATH = args.docindex
     else:
-        DOCINDEX_PATH = os.path.join(RESULTS_DIR, 'DocIndex')
+        DOCINDEX_PATH = os.path.join(RESULTS_DIR, 'DocIndex.json')
     
     # Get model from environment if not specified
     model = "gpt-5.1"

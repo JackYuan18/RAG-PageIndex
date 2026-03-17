@@ -16,16 +16,15 @@ import logging
 import yaml
 from pathlib import Path
 from types import SimpleNamespace as config
-
+import re
 CHATGPT_API_KEY = os.getenv("CHATGPT_API_KEY")
 HF_TOKEN = os.getenv("HF_TOKEN")
 # API Provider: "ollama", "openai", "huggingface", or None (auto-detect)
 # API_PROVIDER = os.getenv("API_PROVIDER", "ollama").lower()  # Default to Ollama
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
-# OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")  # Default model for Ollama
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")  # Default model for Ollama
 # OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:70b")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b-instruct-q8_0")
-
+QWEN_MODEL = os.getenv("QWEN_MODEL", "qwen2.5:14b")
 
 
 
@@ -37,6 +36,11 @@ def get_openai_client(model):
         return openai.OpenAI(
             base_url=OLLAMA_BASE_URL,
             api_key="ollama"  # Ollama doesn't require a real API key
+        )
+    elif model == "qwen":
+        return openai.OpenAI(
+            base_url=OLLAMA_BASE_URL,
+            api_key="qwen"
         )
     elif model == "huggingface":
         return openai.OpenAI(
@@ -53,6 +57,11 @@ def get_async_openai_client(model):
             base_url=OLLAMA_BASE_URL,
             api_key="ollama"
         )
+    elif model == "qwen":
+        return openai.AsyncOpenAI(
+            base_url=OLLAMA_BASE_URL,
+            api_key="qwen"
+        )
     elif model == "huggingface":
         return openai.AsyncOpenAI(
             base_url="https://router.huggingface.co/v1",
@@ -67,6 +76,8 @@ def get_model_name(model=None):
         return OLLAMA_MODEL
     elif model == "huggingface":
         return "openai/gpt-oss-120b:groq"
+    elif model == "qwen":
+        return QWEN_MODEL
     else:
         return model
 
@@ -200,8 +211,12 @@ def extract_json(content):
         json_content = json_content.replace('None', 'null')  # Replace Python None with JSON null
         json_content = json_content.replace('\n', ' ').replace('\r', ' ')  # Remove newlines
         json_content = ' '.join(json_content.split())  # Normalize whitespace
+        # json_content = json_content.replace('\\\\"', '\\"',json_content) # Fix double-escaped quotes
+        # json_content = re.sub(r',\s([}\]])', r'\1', json_content) # Remove trailing commas with any whitespace
+
 
         # Attempt to parse and return the JSON object
+        # print(f'json_content: {json_content}')
         return json.loads(json_content)
     except json.JSONDecodeError as e:
         logging.error(f"Failed to extract JSON: {e}")
@@ -212,7 +227,7 @@ def extract_json(content):
             return json.loads(json_content)
         except:
             logging.error("Failed to parse JSON even after cleanup")
-            print(f'json_content: {json_content}')
+            
             raise e
             return {}
     except Exception as e:
@@ -676,8 +691,13 @@ def add_node_text_with_labels(node, pdf_pages):
 
 async def generate_node_summary(node, model=None):
     if 'text' in node:
-        prompt = f"""You are given a part of a document, your task is to generate a summary of the partial document about what are main points covered in the partial document.
-
+        prompt = {}
+        prompt['system_prompt'] = f"""
+        You are an expert in generating summaries for documents.
+        You are given a part of a document.
+        Your task is to generate a summary of the partial document about what are main points covered in the partial document.
+        """
+        prompt['user_prompt'] = f"""
         Partial Document Text: {node['text']}
         
         Directly return the summary, do not include any other text.
@@ -687,12 +707,18 @@ async def generate_node_summary(node, model=None):
 
 async def generate_parent_node_summary(node, model=None):
     
-    prompt = f"""You are given a part of a document, your task is to generate a summary of the parent node of the partial document about what are main points covered in the children nodes using the summaries of the children nodes.
-
+    prompt = {}
+    prompt['system_prompt'] = f"""
+    You are an expert in generating summaries for documents.
+    You are given a part of a document.
+    Your task is to generate a summary of the parent node of the partial document about what are main points covered in the children nodes using the summaries of the children nodes.
+    """
+    prompt['user_prompt'] = f"""
     Partial Document Text: {' '.join([node['summary'] for node in node['nodes']])}
     
     Directly return the summary, do not include any other text.
     """
+    
     response = await ChatGPT_API_async(model, prompt)
     return response
     
@@ -805,11 +831,10 @@ def create_clean_structure_for_abstract(structure):
         return structure
 
 def generate_keywords(abstract, model=None):
-    prompt = f"""Your are an expert in generating keywords for a document.
+    prompt = {}
+    prompt['system_prompt'] = f"""Your are an expert in generating keywords for a document.
     You are given a abstract of a document. Your task is to generate a list of keywords with distinct meanings for the document, 
     which makes it helpful for users to find relevant documents given related queries.
-    
-    Abstract: {abstract}
 
     The keywords should be short and concise, no more than three words, and should be related to the content of the document.
     THe keywords should be distinct and should not be synonyms.
@@ -821,13 +846,20 @@ def generate_keywords(abstract, model=None):
     Directly return the keywords, do not include any other text.
     Return the keywords as a string separated by commas in the following format: "keyword1, keyword2, keyword3, ..."
     """
+    prompt['user_prompt'] = f"""
+    Abstract: {abstract}
+    
+    Directly return the keywords, do not include any other text.
+    """
     response = ChatGPT_API(model, prompt)
     return response
 
 def generate_doc_description(structure, model=None):
-    prompt = f"""Your are an expert in generating descriptions for a document.
+    prompt = {}
+    prompt['system_prompt'] = f"""Your are an expert in generating descriptions for a document.
     You are given a structure of a document. Your task is to generate a one-sentence description for the document, which makes it easy to distinguish the document from other documents.
-        
+    """
+    prompt['user_prompt'] = f"""
     Document Structure: {structure}
     
     Directly return the description, do not include any other text.
@@ -836,7 +868,8 @@ def generate_doc_description(structure, model=None):
     return response
 
 def generate_doc_abstract(structure, model=None):
-    prompt = f"""Your are an expert in generating abstracts for a document.
+    prompt = {}
+    prompt['system_prompt'] = f"""Your are an expert in generating abstracts for a document.
     You are given a structure of summaries of a document. Your task is to generate a concise abstract for the document, which makes it easy to have a quick idea of the content of the document.
 
     The abstract should contain: 
@@ -846,10 +879,13 @@ def generate_doc_abstract(structure, model=None):
     4. The major findings or results of the document.
     5. The major conclusions, limitations, or implications of the document.
     The abstract should be no more than 300 words.
+
+    Directly return the description, do not include any other text."""
         
+    prompt['user_prompt'] = f"""
     Document Structure: {structure}
     
-    Directly return the description, do not include any other text.
+    Directly return the abstract, do not include any other text.
     """
     response = ChatGPT_API(model, prompt)
     return response

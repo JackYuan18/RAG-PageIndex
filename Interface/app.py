@@ -15,7 +15,8 @@ import webbrowser
 import threading
 import time
 import queue
-from flask import Flask, render_template, request, jsonify, Response, stream_with_context
+from urllib.parse import quote
+from flask import Flask, render_template, request, jsonify, Response, stream_with_context, send_from_directory, abort
 from dotenv import load_dotenv
 
 # Add parent directories to path
@@ -34,7 +35,31 @@ app.config['JSON_AS_ASCII'] = False  # Support non-ASCII characters
 
 # Configuration
 RESULTS_DIR = os.path.join(project_root, 'results')
-DOCINDEX_PATH = os.path.join(RESULTS_DIR, 'DocIndex')
+DATABASE_DIR = os.path.join(project_root, 'Database')
+DOCINDEX_PATH = os.path.join(RESULTS_DIR, 'DocIndex.json')
+
+@app.route('/docs/<path:filename>')
+def serve_doc(filename: str):
+    """
+    Serve documents referenced by sources links.
+
+    - PDFs and original documents: served from `Database/`
+    - Generated artifacts (e.g., *_structure.json): served from `results/`
+    """
+    # send_from_directory guards against path traversal.
+    if not filename or filename.strip() == "":
+        abort(404)
+
+    # Prefer original documents when present (e.g., PDFs).
+    db_candidate = os.path.join(DATABASE_DIR, filename)
+    if os.path.isfile(db_candidate):
+        return send_from_directory(DATABASE_DIR, filename, as_attachment=False)
+
+    results_candidate = os.path.join(RESULTS_DIR, filename)
+    if os.path.isfile(results_candidate):
+        return send_from_directory(RESULTS_DIR, filename, as_attachment=False)
+
+    abort(404)
 
 
 @app.route('/')
@@ -49,7 +74,24 @@ def query():
     try:
         data = request.get_json()
         query_text = data.get('query', '').strip()
-        model = data.get('model', 'ollama')  # Default to "ollama"
+        model_choice = data.get('model', 'qwen')  # Value from dropdown
+
+        # Map dropdown choices to actual model strings / providers
+        if model_choice == 'ollama':
+            # Use default Ollama model from environment (handled in utils)
+            model = 'ollama'
+        elif model_choice == 'qwen':
+            # Use a sensible default Qwen model (served via Ollama or remote)
+            model = 'qwen'
+        elif model_choice == 'huggingface':
+            # Use HuggingFace router (handled in utils.get_model_name)
+            model = 'huggingface'
+        elif model_choice == 'openai gpt':
+            # Default OpenAI GPT model
+            model = 'openai'
+        else:
+            # Fallback to raw value
+            model = model_choice
         
         if not query_text:
             return jsonify({
@@ -106,6 +148,30 @@ def query():
                         if result and 'error' in result:
                             yield f"data: {json.dumps({'type': 'error', 'error': result['error']})}\n\n"
                         else:
+                            # Attach clickable sources for UI rendering.
+                            sources = []
+                            try:
+                                retrieved = result.get("retrieved_nodes") or []
+                                paths = [r.get("doc_path") for r in retrieved if isinstance(r, dict)]
+                                # Prefer retrieved paths; fall back to matched_documents.
+                                if not any(paths):
+                                    paths = result.get("matched_documents") or []
+
+                                seen = set()
+                                for p in paths:
+                                    if not p:
+                                        continue
+                                    base = os.path.basename(str(p))
+                                    if not base or base in seen:
+                                        continue
+                                    seen.add(base)
+                                    sources.append({
+                                        "name": base,
+                                        "url": f"/docs/{quote(base)}"
+                                    })
+                            except Exception:
+                                sources = []
+                            result["sources"] = sources
                             yield f"data: {json.dumps({'type': 'result', 'data': result})}\n\n"
                         break
                     elif item['type'] == 'error':
@@ -156,7 +222,7 @@ if __name__ == '__main__':
         print("Please run run_pageindex.py first to generate document structures and DocIndex.")
     
     # Get port from environment variable or use default
-    port = int(os.getenv('FLASK_PORT', 5000))
+    port = int(os.getenv('FLASK_PORT', 5001))
     host = os.getenv('FLASK_HOST', '0.0.0.0')
     
     # Determine the URL to open
