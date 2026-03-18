@@ -32,6 +32,7 @@ import sys
 import json
 import argparse
 import asyncio
+from urllib.parse import quote
 from collections import defaultdict
 from typing import List, Dict, Any, Optional
 from dotenv import load_dotenv
@@ -47,8 +48,81 @@ import openai
 
 load_dotenv()
 
-# Configuration - paths relative to project root
+async def combine_answers(query: str, all_trees_node_maps_with_answers: List[Dict[str, Any]], model: Optional[str] = None) -> tuple[str, List[Dict[str, str]]]:
+    """
+    Combine answers from multiple documents into a single answer with inline citations.
+    Returns (answer_text, citation_sources) where citation_sources is [{name, url}, ...] for the UI.
+    """
+    combined_answer = {}
+    citation_sources = []
+    seen_basenames = set()
+    for doc_info in all_trees_node_maps_with_answers:
+        doc_path = doc_info.get('doc_path') or doc_info.get('path', '')
+        answer = doc_info.get('answer', '')
+        if not answer.strip():
+            continue
+        combined_answer[doc_path] = answer
+        base = _doc_basename_for_citation(doc_path)
+        if base != "document" and base not in seen_basenames:
+            seen_basenames.add(base)
+            citation_sources.append({"name": base, "url": f"/docs/{quote(base)}"})
 
+    if not combined_answer:
+        return "No answer could be generated from the retrieved contexts.", citation_sources
+
+    valid_filenames = [s['name'] for s in citation_sources]
+    prompt = {}
+    prompt['system_prompt'] = f"""
+    You are a rigorous scholar combining answers from multiple documents into a single answer with inline citations.
+
+    Task:
+    You are given a table of answers (keyed by document path) and a query.
+    Compile them into one structured response.
+
+    CITATION RULE (mandatory):
+    - Place citations immediately after each sentence or claim they support.
+    - When a claim is supported by ONE source, use: [Source: filename]
+    - When a claim is supported by MULTIPLE sources, cite ALL of them: [Source: filename1, filename2, ...]
+    - Valid filenames (use exactly as shown): {valid_filenames}
+    - Do not invent filenames; use only the ones above.
+    - Preserve existing [Source: ...] citations from per-document answers; when merging overlapping content from multiple docs, combine their citations into one multi-source citation.
+
+    Instructions:
+    - Merge overlapping content; avoid repetition.
+    - Use clear section headers (## Heading).
+    - Keep the answer concise and well-organized.
+    - Every factual claim must have a citation listing all supporting sources.
+
+    Directly return the final answer. Do not output anything else.
+    """
+    prompt['user_prompt'] = f"""
+    Query: {query}
+
+    Table of answers (each may already contain [Source: filename] citations):
+    {json.dumps(combined_answer, indent=2)}
+    """
+    try:
+        response = await ChatGPT_API_async(model=model, prompt=prompt)
+        return response.strip(), citation_sources
+    except Exception as e:
+        print(f"Error generating answer: {e}")
+        return "Error generating answer.", citation_sources
+
+
+# Configuration - paths relative to project root
+async def generate_answer_for_each_context(query: str, all_trees_node_maps: List[Dict[str, Any]], model: Optional[str] = None):
+    """Generate answer for each context with inline [Source: filename] citations."""
+    
+    for doc_info in all_trees_node_maps:
+        context = doc_info.get('context', '')
+        if not context.strip():
+            doc_info['answer'] = ''
+            continue
+        doc_path = doc_info.get('doc_path') or doc_info.get('path', '')
+        answer = await generate_answer_with_citations(query, context, doc_path=doc_path, model=model)
+        doc_info['answer'] = answer
+
+    return all_trees_node_maps
 
 def load_docindex(docindex_path: Optional[str] = None) -> Dict[str, List[str]]:
     """Load DocIndex from file."""
@@ -334,7 +408,7 @@ async def extract_context(node_map: Dict[str, Dict[str, Any]], node_ids: List[st
             try:
                 text = node.get('text') or node.get('content') or node.get('summary', '')
                 title = node.get('title', f'Node {node_id}')
-                context_parts.append(f"## {title}\n\n{text}")
+                context_parts.append(f"## Title: {title}\n\nText: {text}")
             
             except Exception as e:
                 raise Exception(f"Error extracting text from node {node_id}: {e}")
@@ -385,9 +459,61 @@ async def generate_answer(query: str, context: str, model: Optional[str] = None)
     except Exception as e:
         print(f"Error generating answer: {e}")
         return "Error generating answer."
+        
+def _doc_basename_for_citation(doc_path: Optional[str]) -> str:
+    """Get PDF basename for citation; derive from structure path if needed."""
+    if not doc_path:
+        return "document"
+    base = os.path.basename(str(doc_path))
+    if base.endswith("_structure.json"):
+        return base.replace("_structure.json", ".pdf")
+    if base.endswith("structure.json"):
+        return base.replace("structure.json", ".pdf")
+    return base
 
 
-def extract_tree_and_node_map(structure: Dict[str, Any], structure_path: str, all_trees: List[Dict[str, Any]], all_node_maps: List[Dict[str, Any]]) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+async def generate_answer_with_citations(query: str, context: str, doc_path: Optional[str] = None, model: Optional[str] = None) -> str:
+    """Generate answer based on query and context, with inline [Source: filename] citations."""
+    doc_basename = _doc_basename_for_citation(doc_path)
+    prompt = {}
+    prompt['system_prompt'] = f"""
+    You are a rigorous scholar answering queries based on provided document context.
+    You answer with structures and inline citations.
+
+    Always:
+    - Use clear section headers (## Heading).
+    - Break answers into steps; each step should be a single sentence or short paragraph.
+    - Keep responses concise and organized.
+    - Use markdown formatting where appropriate.
+
+    CITATION RULE (mandatory):
+    - Place [Source: {doc_basename}] immediately after each sentence or claim that comes from this context.
+    - Use this exact format; the filename must be exactly: {doc_basename}
+
+    Instructions:
+    1. Answer the query directly and naturally.
+    2. Use the context to provide specific details, examples, or explanations.
+    3. Structure your answer to directly address what was asked.
+    4. If information is not available in the context, acknowledge this but provide what you can.
+    5. Write in a clear, natural, conversational tone.
+
+    Directly return the final answer. Do not output anything else.
+    """
+    prompt['user_prompt'] = f"""
+    User query: {query}
+    Relevant Context from Documents: {context}
+    """
+    
+
+    try:
+        response = await ChatGPT_API_async(model=model, prompt=prompt)
+        return response.strip()
+    except Exception as e:
+        print(f"Error generating answer: {e}")
+        return "Error generating answer."
+
+
+def extract_tree_and_node_map(structure: Dict[str, Any], structure_path: str, all_trees_node_maps: List[Dict[str, Any]]) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """Extract tree structure and node mapping from document structure."""
    
     if structure:
@@ -399,19 +525,21 @@ def extract_tree_and_node_map(structure: Dict[str, Any], structure_path: str, al
             tree = structure
             doc_path = structure_path
         if tree:
-            all_trees.append({
+            node_map = create_node_mapping(tree)
+            all_trees_node_maps.append({
                 'path': structure_path,
                 'tree': tree,
-                'doc_path': doc_path
-            })
-            node_map = create_node_mapping(tree)
-            all_node_maps.append({
-                'path': structure_path,
                 'node_map': node_map,
                 'doc_path': doc_path
             })
+            
+            # all_node_maps.append({
+            #     'path': structure_path,
+                
+            #     'doc_path': doc_path
+            # })
             print(f"  Loaded: {os.path.basename(structure_path)} ({len(node_map)} nodes)")
-    return all_trees, all_node_maps
+    return all_trees_node_maps
 
 def print_retrieved_nodes(node_ids: List[str], node_map: Dict[str, Dict[str, Any]], return_text: bool = False) -> str:
     """Print retrieved nodes in a readable format."""

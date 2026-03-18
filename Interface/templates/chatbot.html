@@ -120,6 +120,16 @@
             margin-top: 0;
         }
 
+        .message-bubble .inline-citation {
+            color: #1d4ed8;
+            text-decoration: none;
+            font-size: 0.9em;
+        }
+
+        .message-bubble .inline-citation:hover {
+            text-decoration: underline;
+        }
+
         .message.user .message-bubble {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
@@ -453,19 +463,30 @@
             }[c]));
         }
 
-        function formatAnswerToHtml(text) {
+        function formatAnswerToHtml(text, sources = []) {
             // 1) Escape HTML to prevent injection
-            const escaped = escapeHtml(text || '');
+            let escaped = escapeHtml(text || '');
 
-            // 2) Convert section headings
-            // - "## Heading" lines -> section title
-            // - "**Heading**:" (single line) -> section title
+            // 2) Replace [Source: filename] or [Source: filename1, filename2, ...] with clickable links
+            if (Array.isArray(sources) && sources.length > 0) {
+                const sourceMap = Object.fromEntries(sources.filter(s => s && s.name && s.url).map(s => [s.name, s]));
+                escaped = escaped.replace(/\[Source:\s*([^\]]+)\]/g, (match, content) => {
+                    const parts = content.split(',').map(p => p.trim()).filter(Boolean);
+                    const linked = parts.map(p => {
+                        const src = sourceMap[p];
+                        if (src) return '<a href="' + escapeHtml(src.url) + '" target="_blank" rel="noopener noreferrer" class="inline-citation">' + escapeHtml(p) + '</a>';
+                        return escapeHtml(p);
+                    }).join(', ');
+                    return '[Source: ' + linked + ']';
+                });
+            }
+
+            // 3) Convert section headings
             const withHeadings = escaped
-                .replace(/^##\s+(.+)$/gm, '<div class="section-title">$1</div>')
-                .replace(/^\*\*(.+?)\*\*:\s*$/gm, '<div class="section-title">$1</div>');
+                .replace(/^##\s+(.+)$/gm, '<div class="section-title"><strong>$1</strong></div>')
+                .replace(/^\*\*(.+?)\*\*:\s*$/gm, '<div class="section-title"><strong>$1</strong></div>');
 
-            // 3) Convert paragraphs: blank lines separate paragraphs.
-            // Inside a paragraph, single newlines become <br>.
+            // 4) Convert paragraphs: blank lines separate paragraphs.
             const blocks = withHeadings
                 .split(/\n\s*\n/g)
                 .map(b => b.trim())
@@ -473,7 +494,6 @@
 
             return blocks
                 .map(b => {
-                    // If the whole block is a section-title div, don't wrap in <p>
                     if (b.startsWith('<div class="section-title">') && b.endsWith('</div>')) {
                         return b;
                     }
@@ -497,7 +517,7 @@
             if (isUser) {
                 bubbleDiv.textContent = content;
             } else {
-                bubbleDiv.innerHTML = formatAnswerToHtml(content);
+                bubbleDiv.innerHTML = formatAnswerToHtml(content, sources);
             }
             
             messageDiv.appendChild(bubbleDiv);
@@ -666,7 +686,7 @@
                                     } else {
                                         const matchedCount = (result.matched_documents || []).length;
                                         const retrievedCount = (result.retrieved_contexts || []).length;
-                                        const info = `Matched ${matchedCount} document(s), Retrieved ${retrievedCount} context(s)`;
+                                        const info = `Retrieved ${retrievedCount} context(s)`;
                                         addMessage(result.answer, false, info, result.sources || []);
                                         statusText.textContent = 'Ready';
                                     }

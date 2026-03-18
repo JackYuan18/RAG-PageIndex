@@ -117,14 +117,13 @@ async def rag_query(query: str, model: Optional[str] = None, doc_index_path: Opt
     # Load document structures
     log("\nStep 2: Loading document structures...")
     
-    all_trees = []
-    all_node_maps = []
+    all_trees_node_maps = []
     for structure_path in matched_docs:
         structure = load_document_structure(structure_path, results_dir=RESULTS_DIR, project_root=PROJECT_ROOT)
-        all_trees, all_node_maps = extract_tree_and_node_map(structure, structure_path, all_trees, all_node_maps)
+        all_trees_node_maps = extract_tree_and_node_map(structure, structure_path, all_trees_node_maps)
         
     
-    if not all_trees:
+    if not all_trees_node_maps:
         return {
             "error": "Could not load any document structures.",
             "query": query,
@@ -133,9 +132,9 @@ async def rag_query(query: str, model: Optional[str] = None, doc_index_path: Opt
     
     # Perform tree search for each document
     log("\nStep 3: Performing reasoning-based tree search...")
-    all_retrieved_nodes = []
     
-    for i, doc_info in enumerate(all_trees):
+    
+    for doc_info in all_trees_node_maps:
         log(f"\nSearching in: {os.path.basename(doc_info['path'])}")
         search_result = await tree_search(query, doc_info['tree'], model=model)
         
@@ -149,54 +148,50 @@ async def rag_query(query: str, model: Optional[str] = None, doc_index_path: Opt
         # Use callback-aware print_retrieved_nodes
         retrieved_lines = ["\nRetrieved Nodes:"]
         for node_id in node_ids:
-            if node_id in all_node_maps[i]['node_map']:
-                node = all_node_maps[i]['node_map'][node_id]
+            if node_id in doc_info['node_map']:
+                node = doc_info['node_map'][node_id]
                 retrieved_lines.append(f"  Node ID: {node['node_id']}\t Page: {node.get('page_index', node.get('start_index', 'N/A'))}\t Title: {node.get('title', 'Unknown')}")
         retrieved_info = "\n".join(retrieved_lines)
         log(retrieved_info)
-        
-        all_retrieved_nodes.append({
-            'path': doc_info['path'],
-            'node_ids': node_ids,
-            'thinking': thinking,
-            'doc_path': doc_info['doc_path']
-        })
+ 
+        doc_info['retrieved_node_ids'] = node_ids
     
     # Extract context from retrieved nodes
     log("\nStep 4: Extracting context from retrieved nodes...")
-    all_contexts = []
     
-    for i, doc_info in enumerate(all_node_maps):
-        node_ids = all_retrieved_nodes[i]['node_ids']
+    
+    for doc_info in all_trees_node_maps:
+        node_ids = doc_info['retrieved_node_ids']
         context = await extract_context(doc_info['node_map'], node_ids, doc_path=doc_info['path'], results_dir=RESULTS_DIR, project_root=PROJECT_ROOT)
-        if len(context)>0:
-            all_contexts.append({
-            'path': doc_info['path'],
-            'context': context,
-            'doc_path': doc_info['doc_path']
-            })
+        # if len(context)>0:
+        doc_info['context'] = context
         
         log(f"  Extracted {len(context)} characters from {os.path.basename(doc_info['path'])}")
-    print(f"all_contexts length: {len(all_contexts)}")
+    # print(f"all_contexts length: {len(all_contexts)}")
     # Combine all contexts
-    combined_context = "\n\n---\n\n".join([c['context'] for c in all_contexts])
     
-    # Generate answer
+    # Generate answer with inline citations
     log("\nStep 5: Generating answer...")
-    log(f"combined_context: {combined_context}")
-    answer = await generate_answer(query, combined_context, model=model)
+    all_trees_node_maps_with_answers = await generate_answer_for_each_context(query, all_trees_node_maps, model=model)
+    answer, citation_sources = await combine_answers(query, all_trees_node_maps_with_answers, model=model)
     
     log("\n" + "=" * 80)
     log("\nAnswer:")
     wrapped_answer = textwrap.fill(answer, width=80)
     log(wrapped_answer)
     
+    retrieved_contexts = [
+        {"path": d["path"], "context": d.get("context", ""), "doc_path": d.get("doc_path", d["path"])}
+        for d in all_trees_node_maps
+        if len(d.get("context", "")) > 0
+    ]
+    
     return {
         "query": query,
         "matched_documents": matched_docs,
-        "retrieved_contexts": all_contexts,
-        "context_length": len(combined_context),
-        "answer": answer
+        "retrieved_contexts": retrieved_contexts,
+        "answer": answer,
+        "sources": citation_sources,
     }
 
 
@@ -244,7 +239,7 @@ def main():
         print(f"\n\nSummary:")
         print(f"  Query: {result['query']}")
         print(f"  Matched Documents: {len(result['matched_documents'])}")
-        print(f"  Total Retrieved Contexts: {len(result['retrieved_contexts'])}")
+        # print(f"  Total Retrieved Contexts: {len(result['retrieved_contexts'])}")
         print(f"  Context Length: {result['context_length']} characters")
 
 

@@ -148,29 +148,25 @@ def query():
                         if result and 'error' in result:
                             yield f"data: {json.dumps({'type': 'error', 'error': result['error']})}\n\n"
                         else:
-                            # Attach clickable sources for UI rendering.
-                            sources = []
-                            try:
-                                retrieved = result.get("retrieved_contexts") or []
-                                paths = [r.get("doc_path") for r in retrieved if isinstance(r, dict)]
-                                # Prefer retrieved paths; fall back to matched_documents.
-                                if not any(paths):
-                                    paths = result.get("matched_documents") or []
-
-                                seen = set()
-                                for p in paths:
-                                    if not p:
-                                        continue
-                                    base = os.path.basename(str(p))
-                                    if not base or base in seen:
-                                        continue
-                                    seen.add(base)
-                                    sources.append({
-                                        "name": base,
-                                        "url": f"/docs/{quote(base)}"
-                                    })
-                            except Exception:
-                                sources = []
+                            # Attach clickable sources for UI rendering (for inline citations + Sources section).
+                            sources = result.get("sources") or []
+                            if not sources:
+                                try:
+                                    retrieved = result.get("retrieved_contexts") or []
+                                    paths = [r.get("doc_path") for r in retrieved if isinstance(r, dict)]
+                                    if not any(paths):
+                                        paths = result.get("matched_documents") or []
+                                    seen = set()
+                                    for p in paths:
+                                        if not p:
+                                            continue
+                                        base = os.path.basename(str(p))
+                                        if not base or base in seen:
+                                            continue
+                                        seen.add(base)
+                                        sources.append({"name": base, "url": f"/docs/{quote(base)}"})
+                                except Exception:
+                                    pass
                             result["sources"] = sources
                             yield f"data: {json.dumps({'type': 'result', 'data': result})}\n\n"
                         break
