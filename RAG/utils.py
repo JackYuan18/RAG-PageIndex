@@ -114,12 +114,25 @@ async def generate_answer_for_each_context(query: str, all_trees_node_maps: List
     """Generate answer for each context with inline [Source: filename] citations."""
     
     for doc_info in all_trees_node_maps:
-        context = doc_info.get('context', '')
-        if not context.strip():
+        text = doc_info.get('context', '')
+        title = doc_info.get('title', '')
+        authors = doc_info.get('authors', '')
+        if not text.strip():
             doc_info['answer'] = ''
             continue
         doc_path = doc_info.get('doc_path') or doc_info.get('path', '')
+        context = ""
+        # Add title if present
+        if title:
+            context += f"Title: {title}\n"
+        # Add authors if present
+        if authors:
+            context += f"Authors: {authors}\n"
+        # Add main text/context
+        context += f"Context: {text}\n"
+        print(f"Context: {context}")
         answer = await generate_answer_with_citations(query, context, doc_path=doc_path, model=model)
+        print(f"Answer: {answer}")
         doc_info['answer'] = answer
 
     return all_trees_node_maps
@@ -440,10 +453,11 @@ async def generate_answer(query: str, context: str, model: Optional[str] = None)
     3. If the query asks "how", explain the process or method
     4. If the query asks "what", provide definitions or descriptions
     5. If the query asks "why", explain reasons or motivations
-    6. Structure your answer to directly address what was asked
-    7. If information is not available in the context, acknowledge this but provide what you can
-    8. Write in a clear, natural, and conversational tone
-    9. Use the exact terminology and phrasing from the context when appropriate
+    6. If the query asks "who", provide the names of the authors
+    7. Structure your answer to directly address what was asked
+    8. If information is not available in the context, acknowledge this but provide what you can
+    9. Write in a clear, natural, and conversational tone
+    10. Use the exact terminology and phrasing from the context when appropriate
 
     Directly return the final answer. Do not output anything else.
     """
@@ -520,6 +534,8 @@ def extract_tree_and_node_map(structure: Dict[str, Any], structure_path: str, al
         # Extract tree structure (handle different formats)
         if isinstance(structure, dict):
             tree = structure.get('structure', structure)
+            title = structure.get('title', '')
+            authors = structure.get('authors', '')
             doc_path = structure.get('doc_path', structure_path)
         else:
             tree = structure
@@ -528,6 +544,8 @@ def extract_tree_and_node_map(structure: Dict[str, Any], structure_path: str, al
             node_map = create_node_mapping(tree)
             all_trees_node_maps.append({
                 'path': structure_path,
+                'title': title,
+                'authors': authors,
                 'tree': tree,
                 'node_map': node_map,
                 'doc_path': doc_path

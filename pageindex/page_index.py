@@ -1351,7 +1351,66 @@ async def tree_parser(page_list, opt, doc=None, logger=None):
     
     return toc_tree
 
+import asyncio
 
+async def extract_title_and_authors(page_list, max_pages_to_inspect=10, model=None):
+    """
+    Use an AI model to extract the document title and authors from the first `max_pages_to_inspect` pages.
+
+    Returns a dict: {'title': ..., 'authors': ...}
+    """
+    # Grab the first N pages' text for context
+    pages_to_check = page_list[:max_pages_to_inspect]
+    page_texts = [p[0] if isinstance(p, (list, tuple)) and len(p) > 0 else str(p) for p in pages_to_check]
+    document_start = "\n".join(page_texts).strip()
+
+    prompt = {}
+    prompt['system_prompt'] = """
+        You are a helpful assistant. Your job is to robustly extract the TITLE of the document and the AUTHOR(S) from the provided beginning pages of a scientific/technical/academic document.
+
+        CRITICAL INSTRUCTIONS AND RULES FOR JSON OUTPUT:
+        - Output ONLY a JSON object, nothing else.
+        - The JSON object must follow:
+        {
+            "title": "<most likely document title (string, never blank)>",
+            "authors": "<concise author string or comma-separated list (string, can be blank if not found)>"
+        }
+        - Do NOT add explanation or comments, ONLY the JSON object.
+        - If title or authors cannot be found, set their values as an empty string ("").
+
+        HOW TO FIND TITLE AND AUTHORS:
+        - The title is usually at the very top, before the abstract, often in a large font and may span multiple lines.
+        - Exclude "abstract", "introduction", "contents", table of contents text, or headers/footers.
+        - Authors may be on the next line(s) under the title or presented as a list, possibly including email addresses or affiliations.
+        - If there are multiple potential titles, pick the most prominent/central one.
+        - Authors should not include affiliations, only actual author names or author emails (if available).
+
+        Your only task: Output a valid JSON object with the best guess at these two fields.
+        """
+
+    prompt['user_prompt'] = f"""
+        The following is the beginning text from a document: {document_start}
+
+
+        Please extract and output only the JSON with fields:
+        - "title" (string, best guess at main title, never blank if anything reasonable exists)
+        - "authors" (string, comma-separated author names, blank if not found)
+
+        If you cannot robustly determine authors, leave it as an empty string.
+        """
+
+    # Call the ChatGPT model (sync or async, depending on available import)
+    # We'll assume an async ChatGPT_API_async like elsewhere in this codebase
+    response = await ChatGPT_API_async(model=model, prompt=prompt)
+
+    out = extract_json(response)
+    # Ensure both keys are present (for robust fallback)
+    
+    if "title" not in out:
+        out["title"] = ""
+    if "authors" not in out:
+        out["authors"] = ""
+    return out
 def page_index_main(doc, opt=None):
     logger = JsonLogger(doc)
 
@@ -1364,10 +1423,15 @@ def page_index_main(doc, opt=None):
 
     print(f'Parsing PDF {doc}...')
     page_list = get_page_tokens(doc)
-
+    logger.info({'page_list': page_list})
     logger.info({'total_page_number': len(page_list)})
     logger.info({'total_token': sum([page[1] for page in page_list])})
+    # Extract title and authors from the first N pages of page_list
+    
 
+    # Example use: extract metadata from first 10 pages (default)
+    doc_title_authors = asyncio.run(extract_title_and_authors(page_list, model=opt.model))
+    logger.info({'extracted_title': doc_title_authors.get('title'), 'extracted_authors': doc_title_authors.get('authors')})
     async def page_index_builder():
         structure = await tree_parser(page_list, opt, doc=doc, logger=logger)
         if opt.if_add_node_id == 'yes':
@@ -1395,6 +1459,8 @@ def page_index_main(doc, opt=None):
                 return {
                     'doc_name': get_pdf_name(doc),
                     'doc_path': doc,
+                    'doc_title': doc_title_authors.get('title'),
+                    'doc_authors': doc_title_authors.get('authors'),
                     'keywords': keywords,
                     'doc_description': doc_description,
                     'doc_abstract': doc_abstract,
