@@ -88,7 +88,7 @@ def query():
             model = 'huggingface'
         elif model_choice == 'openai gpt':
             # Default OpenAI GPT model
-            model = 'openai'
+            model = 'gpt-5.1'
         else:
             # Fallback to raw value
             model = model_choice

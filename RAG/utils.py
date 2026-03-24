@@ -117,6 +117,7 @@ async def generate_answer_for_each_context(query: str, all_trees_node_maps: List
         text = doc_info.get('context', '')
         title = doc_info.get('title', '')
         authors = doc_info.get('authors', '')
+        abstract = doc_info.get('abstract', '')
         if not text.strip():
             doc_info['answer'] = ''
             continue
@@ -128,8 +129,13 @@ async def generate_answer_for_each_context(query: str, all_trees_node_maps: List
         # Add authors if present
         if authors:
             context += f"Authors: {authors}\n"
+        # Add abstract if present
+        if abstract:
+            context += f"Abstract: {abstract}\n"
+
         # Add main text/context
-        context += f"Context: {text}\n"
+        if text:
+            context += f"Context: {text}\n"
         print(f"Context: {context}")
         answer = await generate_answer_with_citations(query, context, doc_path=doc_path, model=model)
         print(f"Answer: {answer}")
@@ -346,18 +352,20 @@ def print_wrapped(text: str, width: int = 80, return_text: bool = False):
     print(wrapped)
 
 
-async def tree_search(query: str, tree: List[Dict[str, Any]], model: Optional[str] = None) -> Dict[str, Any]:
+async def tree_search(query: str, doc_info: Dict[str, Any], model: Optional[str] = None) -> Dict[str, Any]:
     """
     Perform tree search to find relevant nodes for the query.
     Similar to the notebook's tree search step.
     """
     # Remove text fields to reduce token usage
+    tree = doc_info.get('tree')
     tree_without_text = remove_fields(tree.copy(), fields=['text'])
     
 
     prompt = {}
     prompt['system_prompt'] = f"""
-    You are given a question and a hierarchical tree structure of a document.
+    You are given a hierarchical tree structure of a document.
+
     The tree structure has parent nodes that may contain child nodes (nested in a "nodes" field).
     Each node contains a node id, node title, and a corresponding summary.
 
@@ -388,6 +396,10 @@ async def tree_search(query: str, tree: List[Dict[str, Any]], model: Optional[st
         
         # Extract JSON from response
         result = extract_json(response)
+        # Also include title, abstract, and authors from doc_info in the result
+        # result["title"] = doc_info.get("title", "")
+        # result["abstract"] = doc_info.get("abstract", "")
+        # result["authors"] = doc_info.get("authors", "")
         
         return result
     except Exception as e:
@@ -534,9 +546,10 @@ def extract_tree_and_node_map(structure: Dict[str, Any], structure_path: str, al
         # Extract tree structure (handle different formats)
         if isinstance(structure, dict):
             tree = structure.get('structure', structure)
-            title = structure.get('title', '')
-            authors = structure.get('authors', '')
+            title = structure.get('doc_title', '')
+            authors = structure.get('doc_authors', '')
             doc_path = structure.get('doc_path', structure_path)
+            abstract = structure.get('doc_abstract', '')
         else:
             tree = structure
             doc_path = structure_path
@@ -548,7 +561,8 @@ def extract_tree_and_node_map(structure: Dict[str, Any], structure_path: str, al
                 'authors': authors,
                 'tree': tree,
                 'node_map': node_map,
-                'doc_path': doc_path
+                'doc_path': doc_path,
+                'doc_abstract': abstract
             })
             
             # all_node_maps.append({

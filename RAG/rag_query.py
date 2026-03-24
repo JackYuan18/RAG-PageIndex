@@ -136,7 +136,7 @@ async def rag_query(query: str, model: Optional[str] = None, doc_index_path: Opt
     
     for doc_info in all_trees_node_maps:
         log(f"\nSearching in: {os.path.basename(doc_info['path'])}")
-        search_result = await tree_search(query, doc_info['tree'], model=model)
+        search_result = await tree_search(query, doc_info, model=model)
         
         thinking = search_result.get('thinking', 'N/A')
         log(f"\nReasoning Process:")
@@ -198,7 +198,7 @@ async def rag_query(query: str, model: Optional[str] = None, doc_index_path: Opt
 def main():
     parser = argparse.ArgumentParser(description='RAG Query using PageIndex DocIndex')
     parser.add_argument('--query', type=str, required=True, help='Query/question to answer')
-    parser.add_argument('--model', type=str, default="ollama", help='LLM model to use (defaults to API_PROVIDER setting)')
+    parser.add_argument('--model', type=str, default="qwen", help='LLM model to use (defaults to API_PROVIDER setting)')
     parser.add_argument('--docindex', type=str, default=None, help='Path to DocIndex file (default: ./results/DocIndex)')
     parser.add_argument('--results-dir', type=str, default='./results', help='Results directory (default: ./results)')
     
@@ -221,7 +221,7 @@ def main():
         DOCINDEX_PATH = os.path.join(RESULTS_DIR, 'DocIndex.json')
     
     # Get model from environment if not specified
-    model = "gpt-5.1"
+    model = args.model
     # if not model:
     #     api_provider = os.getenv("API_PROVIDER", "ollama").lower()
     #     if api_provider == "ollama":
