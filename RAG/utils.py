@@ -112,7 +112,21 @@ async def combine_answers(query: str, all_trees_node_maps_with_answers: List[Dic
 # Configuration - paths relative to project root
 async def generate_answer_for_each_context(query: str, all_trees_node_maps: List[Dict[str, Any]], model: Optional[str] = None):
     """Generate answer for each context with inline [Source: filename] citations."""
-    
+    def _build_context(doc_info: Dict[str, Any]) -> str:
+        text = doc_info.get("context", "")
+        title = doc_info.get("title", "")
+        authors = doc_info.get("authors", "")
+        abstract = doc_info.get("abstract", "")
+        parts = []
+        if title:
+            parts.append(f"Title: {title}\n")
+        if authors:
+            parts.append(f"Authors: {authors}\n")
+        if abstract:
+            parts.append(f"Abstract: {abstract}\n")
+        if text:
+            parts.append(f"Context: {text}\n")
+        return "".join(parts)
     for doc_info in all_trees_node_maps:
         text = doc_info.get('context', '')
         title = doc_info.get('title', '')
@@ -396,11 +410,7 @@ async def tree_search(query: str, doc_info: Dict[str, Any], model: Optional[str]
         
         # Extract JSON from response
         result = extract_json(response)
-        # Also include title, abstract, and authors from doc_info in the result
-        # result["title"] = doc_info.get("title", "")
-        # result["abstract"] = doc_info.get("abstract", "")
-        # result["authors"] = doc_info.get("authors", "")
-        
+  
         return result
     except Exception as e:
         print(f"Error in tree search: {e}")
