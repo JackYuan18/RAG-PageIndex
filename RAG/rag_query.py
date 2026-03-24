@@ -81,7 +81,7 @@ async def rag_query(query: str, model: Optional[str] = None, doc_index_path: Opt
         """Log message to both callback and print."""
         if progress_callback:
             progress_callback(message)
-        print(message)
+        # print(message)
     
     # Load DocIndex
     global DOCINDEX_PATH
@@ -139,10 +139,10 @@ async def rag_query(query: str, model: Optional[str] = None, doc_index_path: Opt
         search_result = await tree_search(query, doc_info, model=model)
         
         thinking = search_result.get('thinking', 'N/A')
-        log(f"\nReasoning Process:")
+        print(f"\nReasoning Process:")
         # Use callback-aware print_wrapped
         wrapped_thinking = textwrap.fill(thinking, width=80)
-        log(wrapped_thinking)
+        print(wrapped_thinking)
         
         node_ids = search_result.get('node_list', [])
         # Use callback-aware print_retrieved_nodes
@@ -152,7 +152,7 @@ async def rag_query(query: str, model: Optional[str] = None, doc_index_path: Opt
                 node = doc_info['node_map'][node_id]
                 retrieved_lines.append(f"  Node ID: {node['node_id']}\t Page: {node.get('page_index', node.get('start_index', 'N/A'))}\t Title: {node.get('title', 'Unknown')}")
         retrieved_info = "\n".join(retrieved_lines)
-        log(retrieved_info)
+        print(retrieved_info)
  
         doc_info['retrieved_node_ids'] = node_ids
     
@@ -166,7 +166,7 @@ async def rag_query(query: str, model: Optional[str] = None, doc_index_path: Opt
         # if len(context)>0:
         doc_info['context'] = context
         
-        log(f"  Extracted {len(context)} characters from {os.path.basename(doc_info['path'])}")
+        print(f"  Extracted {len(context)} characters from {os.path.basename(doc_info['path'])}")
     # print(f"all_contexts length: {len(all_contexts)}")
     # Combine all contexts
     

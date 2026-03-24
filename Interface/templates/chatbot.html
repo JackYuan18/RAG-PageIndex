@@ -149,6 +149,7 @@
             color: #6b7280;
             margin-top: 5px;
             padding: 0 5px;
+            white-space: pre-line;
         }
 
         .message-sources {
@@ -640,6 +641,8 @@
             // Update status
             statusText.textContent = 'Processing...';
 
+            const queryStartedAt = performance.now();
+
             try {
                 // Use EventSource for Server-Sent Events
                 const response = await fetch('/api/query', {
@@ -684,9 +687,9 @@
                                         addSystemMessage(`Error: ${result.error}`);
                                         statusText.textContent = 'Error';
                                     } else {
-                                        const matchedCount = (result.matched_documents || []).length;
                                         const retrievedCount = (result.retrieved_contexts || []).length;
-                                        const info = `Retrieved ${retrievedCount} context(s)`;
+                                        const elapsedSec = ((performance.now() - queryStartedAt) / 1000).toFixed(2);
+                                        const info = `Retrieved ${retrievedCount} context(s)\nAnswer generated in ${elapsedSec} s`;
                                         addMessage(result.answer, false, info, result.sources || []);
                                         statusText.textContent = 'Ready';
                                     }
