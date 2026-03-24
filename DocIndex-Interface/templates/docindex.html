@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DocIndex Manager</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #0f766e 0%, #155e75 100%);
+            min-height: 100vh;
+            padding: 24px;
+            color: #0f172a;
+        }
+        .wrap {
+            max-width: 1100px;
+            margin: 0 auto;
+        }
+        .card {
+            background: #fff;
+            border-radius: 16px;
+            box-shadow: 0 16px 48px rgba(0,0,0,.2);
+            overflow: hidden;
+            margin-bottom: 20px;
+        }
+        .header {
+            background: linear-gradient(135deg, #0d9488 0%, #0e7490 100%);
+            color: #fff;
+            padding: 22px 28px;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+        }
+        .header h1 { font-size: 1.35rem; font-weight: 600; }
+        .btn {
+            border: none;
+            border-radius: 10px;
+            padding: 10px 18px;
+            font-size: 0.9rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform .08s ease, box-shadow .15s ease;
+        }
+        .btn:disabled { opacity: .55; cursor: not-allowed; transform: none; }
+        .btn:not(:disabled):hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,.15); }
+        .btn-primary { background: #fff; color: #0f766e; }
+        .btn-secondary { background: rgba(255,255,255,.2); color: #fff; border: 1px solid rgba(255,255,255,.45); }
+        .btn-row { background: #f0fdfa; color: #115e59; border: 1px solid #99f6e4; padding: 8px 14px; font-size: 0.82rem; }
+        .btn-row.danger-outline { background: #fff7ed; color: #9a3412; border-color: #fdba74; }
+        .section { padding: 22px 28px; }
+        .section h2 { font-size: 1rem; color: #334155; margin-bottom: 12px; }
+        .meta {
+            font-size: 0.85rem;
+            color: #64748b;
+            line-height: 1.6;
+            word-break: break-all;
+        }
+        .badges { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+        .badge {
+            font-size: 0.75rem;
+            padding: 4px 10px;
+            border-radius: 999px;
+            background: #e0f2fe;
+            color: #0369a1;
+        }
+        .badge.warn { background: #fef3c7; color: #b45309; }
+        .badge.ok { background: #dcfce7; color: #166534; }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.9rem;
+        }
+        th, td { text-align: left; padding: 12px 14px; border-bottom: 1px solid #e2e8f0; }
+        th { background: #f8fafc; color: #475569; font-weight: 600; font-size: 0.78rem; text-transform: uppercase; letter-spacing: .04em; }
+        tr.doc-row { cursor: pointer; }
+        tr.doc-row:hover { background: #f1f5f9; }
+        tr.doc-row td:first-child { font-weight: 500; color: #0f172a; }
+        .actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+        .progress-log {
+            margin: 10px 0 0;
+            max-height: 220px;
+            overflow: auto;
+            padding: 10px 12px;
+            font-size: 0.75rem;
+            line-height: 1.45;
+            white-space: pre-wrap;
+            word-break: break-word;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            color: #1e293b;
+        }
+        .header-progress-wrap .progress-log {
+            margin-top: 10px;
+            max-height: 260px;
+        }
+        tr.doc-progress-row .progress-log {
+            margin-top: 8px;
+            max-height: 200px;
+        }
+        .empty { color: #94a3b8; font-size: 0.9rem; padding: 20px 0; }
+        .footer-note { font-size: 0.8rem; color: #64748b; margin-top: 8px; }
+        .header-progress-wrap {
+            display: none;
+            padding: 0 28px 14px;
+            margin-top: -6px;
+        }
+        .header-progress-wrap.is-active { display: block; }
+        tr.doc-progress-row { display: none; }
+        tr.doc-progress-row.is-active { display: table-row; }
+        tr.doc-progress-row td {
+            padding: 0 14px 10px;
+            border-bottom: 1px solid #e2e8f0;
+            vertical-align: middle;
+        }
+        .row-progress-track {
+            height: 7px;
+            background: #e0f2fe;
+            border-radius: 999px;
+            overflow: hidden;
+            width: 100%;
+        }
+        .row-progress-fill {
+            height: 100%;
+            width: 45%;
+            max-width: 55%;
+            background: linear-gradient(90deg, #bae6fd 0%, #7dd3fc 45%, #38bdf8 100%);
+            border-radius: 999px;
+            box-shadow: 0 0 12px rgba(56, 189, 248, 0.45);
+            animation: row-progress-indeterminate 1.35s ease-in-out infinite;
+        }
+        @keyframes row-progress-indeterminate {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(320%); }
+        }
+    </style>
+</head>
+<body>
+    <div class="wrap">
+        <div class="card">
+            <div class="header">
+                <h1>DocIndex &amp; Database</h1>
+                <button type="button" class="btn btn-primary" id="btnReconstruct">DocIndex Reconstruction</button>
+            </div>
+            <div class="header-progress-wrap" id="reconstructProgressWrap" aria-hidden="true">
+                <div class="row-progress-track" role="progressbar" aria-label="DocIndex reconstruction in progress">
+                    <div class="row-progress-fill"></div>
+                </div>
+                <pre class="progress-log" id="reconstructProgressLog"></pre>
+            </div>
+            <div class="section" id="docindexSection">
+                <h2>DocIndex.json</h2>
+                <div class="meta" id="docindexMeta">Loading…</div>
+                <div class="badges" id="docindexBadges"></div>
+                <p class="footer-note">Indexed stems list every document title stem referenced by at least one keyword in DocIndex.json.</p>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="section">
+                <h2>Documents in Database folder</h2>
+                <p class="meta" id="dbPath"></p>
+                <div id="tableWrap"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let pollTimer = null;
+        let activeJobId = null;
+        // Tracks which UI progress bar to show: full DocIndex rebuild vs. one document row.
+        let activeJobContext = null;
+
+        function clearProgressLogElements() {
+            const r = document.getElementById('reconstructProgressLog');
+            if (r) r.textContent = '';
+            document.querySelectorAll('tr.doc-progress-row .progress-log').forEach((el) => {
+                el.textContent = '';
+            });
+        }
+
+        function updateProgressLogs(text) {
+            const t = text || '';
+            if (activeJobContext && activeJobContext.kind === 'reconstruct') {
+                const el = document.getElementById('reconstructProgressLog');
+                if (el) {
+                    el.textContent = t;
+                    el.scrollTop = el.scrollHeight;
+                }
+                return;
+            }
+            if (activeJobContext && activeJobContext.kind === 'document' && activeJobContext.filename) {
+                const enc = encodeURIComponent(activeJobContext.filename);
+                document.querySelectorAll('tr.doc-progress-row').forEach((row) => {
+                    if (row.getAttribute('data-filename') === enc) {
+                        const el = row.querySelector('.progress-log');
+                        if (el) {
+                            el.textContent = t;
+                            el.scrollTop = el.scrollHeight;
+                        }
+                    }
+                });
+            }
+        }
+
+        function hideAllProgressBars() {
+            const wrap = document.getElementById('reconstructProgressWrap');
+            if (wrap) {
+                wrap.classList.remove('is-active');
+                wrap.setAttribute('aria-hidden', 'true');
+            }
+            document.querySelectorAll('tr.doc-progress-row').forEach((tr) => {
+                tr.classList.remove('is-active');
+                tr.setAttribute('aria-hidden', 'true');
+            });
+            clearProgressLogElements();
+        }
+
+        function showProgressForContext(ctx) {
+            hideAllProgressBars();
+            if (!ctx) return;
+            if (ctx.kind === 'reconstruct') {
+                const wrap = document.getElementById('reconstructProgressWrap');
+                if (wrap) {
+                    wrap.classList.add('is-active');
+                    wrap.setAttribute('aria-hidden', 'false');
+                }
+                return;
+            }
+            if (ctx.kind === 'document' && ctx.filename) {
+                const enc = encodeURIComponent(ctx.filename);
+                document.querySelectorAll('tr.doc-progress-row').forEach((tr) => {
+                    if (tr.getAttribute('data-filename') === enc) {
+                        tr.classList.add('is-active');
+                        tr.setAttribute('aria-hidden', 'false');
+                    }
+                });
+            }
+        }
+
+        function stopPoll() {
+            if (pollTimer) {
+                clearInterval(pollTimer);
+                pollTimer = null;
+            }
+        }
+
+        function setButtonsBusy(busy) {
+            document.getElementById('btnReconstruct').disabled = busy;
+            document.querySelectorAll('.btn-row').forEach((b) => { b.disabled = busy; });
+        }
+
+        async function fetchOverview() {
+            const r = await fetch('/api/overview');
+            if (!r.ok) throw new Error('Failed to load overview');
+            return r.json();
+        }
+
+        function renderDocindex(data) {
+            const di = data.docindex || {};
+            const meta = document.getElementById('docindexMeta');
+            const badges = document.getElementById('docindexBadges');
+            meta.textContent = di.path || '';
+            badges.innerHTML = '';
+            if (di.exists) {
+                badges.innerHTML =
+                    `<span class="badge ok">File present</span>` +
+                    `<span class="badge">${di.keyword_count} keywords</span>` +
+                    `<span class="badge">${(di.indexed_document_stems || []).length} indexed document stem(s)</span>`;
+            } else {
+                badges.innerHTML = '<span class="badge warn">DocIndex.json missing — run reconstruction or add a document</span>';
+            }
+        }
+
+        function renderTable(data) {
+            const docs = data.documents || [];
+            const wrap = document.getElementById('tableWrap');
+            document.getElementById('dbPath').textContent = 'Folder: ' + (data.database_dir || '');
+            if (docs.length === 0) {
+                wrap.innerHTML = '<p class="empty">No PDF or Markdown files in the Database folder.</p>';
+                return;
+            }
+            const rows = docs.map((d) => {
+                const pdfOk = d.kind === 'pdf';
+                const statusBits = [];
+                if (d.structure_exists) statusBits.push('structure');
+                if (d.in_docindex) statusBits.push('in DocIndex');
+                const status = statusBits.length ? statusBits.join(' · ') : '—';
+                const disabledAttr = pdfOk ? '' : ' disabled title="Only PDF is supported for PageIndex in this project"';
+                const fnEnc = encodeURIComponent(d.filename);
+                return `
+                    <tr class="doc-row" data-open="${d.open_url}" data-filename="${fnEnc}">
+                        <td>${escapeHtml(d.filename)}</td>
+                        <td><span class="meta">${escapeHtml(d.kind.toUpperCase())}</span></td>
+                        <td><span class="meta">${escapeHtml(status)}</span></td>
+                        <td>
+                            <div class="actions">
+                                <button type="button" class="btn btn-row"${disabledAttr} data-action="add" data-filename="${fnEnc}">Add to DocIndex</button>
+                                <button type="button" class="btn btn-row danger-outline"${disabledAttr} data-action="update" data-filename="${fnEnc}">Update Structure</button>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr class="doc-progress-row" data-filename="${fnEnc}" aria-hidden="true">
+                        <td colspan="4">
+                            <div class="row-progress-track" role="progressbar" aria-label="Processing ${escapeHtml(d.filename)}">
+                                <div class="row-progress-fill"></div>
+                            </div>
+                            <pre class="progress-log" aria-live="polite"></pre>
+                        </td>
+                    </tr>`;
+            }).join('');
+            wrap.innerHTML = `
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Document</th>
+                            <th>Type</th>
+                            <th>Status</th>
+                            <th style="text-align:right">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                </table>`;
+
+            wrap.querySelectorAll('tr.doc-row').forEach((tr) => {
+                tr.addEventListener('click', (ev) => {
+                    if (ev.target.closest('button')) return;
+                    const url = tr.getAttribute('data-open');
+                    if (url) window.open(url, '_blank', 'noopener,noreferrer');
+                });
+            });
+            wrap.querySelectorAll('button[data-action]').forEach((btn) => {
+                btn.addEventListener('click', (ev) => {
+                    ev.stopPropagation();
+                    const mode = btn.getAttribute('data-action') === 'add' ? 'add_to_docindex' : 'update_structure';
+                    let filename = btn.getAttribute('data-filename') || '';
+                    try { filename = decodeURIComponent(filename); } catch (e) { /* keep raw */ }
+                    startProcessDocument(filename, mode);
+                });
+            });
+        }
+
+        function escapeHtml(s) {
+            const div = document.createElement('div');
+            div.textContent = s;
+            return div.innerHTML;
+        }
+
+        async function refresh() {
+            try {
+                const data = await fetchOverview();
+                renderDocindex(data);
+                renderTable(data);
+            } catch (e) {
+                document.getElementById('docindexMeta').textContent = 'Error: ' + e.message;
+            }
+        }
+
+        async function pollJob(jobId) {
+            const r = await fetch('/api/job/' + encodeURIComponent(jobId));
+            const j = await r.json();
+            if (!j.success || !j.job) return;
+            const job = j.job;
+            let out = job.output || '';
+            if (job.error) out = (out ? out + '\n' : '') + 'Error: ' + job.error;
+            if (!out.trim() && job.status === 'running') {
+                out = 'Running… (waiting for output from script)';
+            }
+            updateProgressLogs(out);
+            if (job.status === 'done' || job.status === 'failed') {
+                stopPoll();
+                setButtonsBusy(false);
+                activeJobId = null;
+                activeJobContext = null;
+                hideAllProgressBars();
+                refresh();
+            }
+        }
+
+        function startPolling(jobId, context) {
+            stopPoll();
+            activeJobId = jobId;
+            activeJobContext = context || null;
+            clearProgressLogElements();
+            showProgressForContext(activeJobContext);
+            updateProgressLogs('Starting…');
+            pollJob(jobId);
+            pollTimer = setInterval(() => pollJob(jobId), 400);
+        }
+
+        async function startReconstruct() {
+            setButtonsBusy(true);
+            activeJobContext = { kind: 'reconstruct' };
+            clearProgressLogElements();
+            showProgressForContext({ kind: 'reconstruct' });
+            updateProgressLogs('Submitting reconstruction…');
+            try {
+                const r = await fetch('/api/reconstruct', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+                const data = await r.json();
+                if (!data.success || !data.job_id) {
+                    setButtonsBusy(false);
+                    showProgressForContext({ kind: 'reconstruct' });
+                    updateProgressLogs('Failed to start job:\n' + JSON.stringify(data, null, 2));
+                    activeJobContext = null;
+                    return;
+                }
+                startPolling(data.job_id, { kind: 'reconstruct' });
+            } catch (e) {
+                setButtonsBusy(false);
+                showProgressForContext({ kind: 'reconstruct' });
+                updateProgressLogs('Network error: ' + e.message);
+                activeJobContext = null;
+            }
+        }
+
+        async function startProcessDocument(filename, mode) {
+            setButtonsBusy(true);
+            activeJobContext = { kind: 'document', filename };
+            clearProgressLogElements();
+            showProgressForContext({ kind: 'document', filename });
+            updateProgressLogs('Submitting…');
+            try {
+                const r = await fetch('/api/process-document', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filename, mode }),
+                });
+                const data = await r.json();
+                if (!r.ok || !data.success) {
+                    setButtonsBusy(false);
+                    showProgressForContext({ kind: 'document', filename });
+                    updateProgressLogs('Request failed:\n' + (data.error || JSON.stringify(data)));
+                    activeJobContext = null;
+                    return;
+                }
+                startPolling(data.job_id, { kind: 'document', filename });
+            } catch (e) {
+                setButtonsBusy(false);
+                showProgressForContext({ kind: 'document', filename });
+                updateProgressLogs('Network error: ' + e.message);
+                activeJobContext = null;
+            }
+        }
+
+        document.getElementById('btnReconstruct').addEventListener('click', startReconstruct);
+        refresh();
+    </script>
+</body>
+</html>
