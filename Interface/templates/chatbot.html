@@ -688,8 +688,28 @@
                                         statusText.textContent = 'Error';
                                     } else {
                                         const retrievedCount = (result.retrieved_contexts || []).length;
+                                        const matchedDocs =
+                                            result.matched_document_count != null
+                                                ? result.matched_document_count
+                                                : (result.matched_documents || []).length;
+                                        const nodeCount =
+                                            result.retrieved_node_count != null
+                                                ? result.retrieved_node_count
+                                                : 0;
                                         const elapsedSec = ((performance.now() - queryStartedAt) / 1000).toFixed(2);
-                                        const info = `Retrieved ${retrievedCount} context(s)\nAnswer generated in ${elapsedSec} s`;
+                                        const timings = result.step_timings || [];
+                                        const timingLines = timings.map((t) => {
+                                            const s = Number(t.seconds);
+                                            const sec = Number.isFinite(s) ? s.toFixed(2) : String(t.seconds);
+                                            return `${t.step}: ${sec} s`;
+                                        });
+                                        const info = [
+                                            `Matched documents: ${matchedDocs}`,
+                                            `Nodes retrieved for context: ${nodeCount}`,
+                                            `Retrieved ${retrievedCount} context(s)`,
+                                            `Answer generated in ${elapsedSec} s`,
+                                            ...timingLines,
+                                        ].join('\n');
                                         addMessage(result.answer, false, info, result.sources || []);
                                         statusText.textContent = 'Ready';
                                     }

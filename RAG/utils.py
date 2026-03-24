@@ -110,7 +110,10 @@ async def combine_answers(query: str, all_trees_node_maps_with_answers: List[Dic
 
 
 # Configuration - paths relative to project root
-async def generate_answer_for_each_context(query: str, all_trees_node_maps: List[Dict[str, Any]], model: Optional[str] = None):
+async def generate_answer_for_each_context(
+    query: str, 
+    all_trees_node_maps: List[Dict[str, Any]], 
+    model: Optional[str] = None):
     """Generate answer for each context with inline [Source: filename] citations."""
     def _build_context(doc_info: Dict[str, Any]) -> str:
         text = doc_info.get("context", "")
@@ -127,33 +130,35 @@ async def generate_answer_for_each_context(query: str, all_trees_node_maps: List
         if text:
             parts.append(f"Context: {text}\n")
         return "".join(parts)
-    for doc_info in all_trees_node_maps:
-        text = doc_info.get('context', '')
-        title = doc_info.get('title', '')
-        authors = doc_info.get('authors', '')
-        abstract = doc_info.get('abstract', '')
-        if not text.strip():
-            doc_info['answer'] = ''
-            continue
-        doc_path = doc_info.get('doc_path') or doc_info.get('path', '')
-        context = ""
-        # Add title if present
-        if title:
-            context += f"Title: {title}\n"
-        # Add authors if present
-        if authors:
-            context += f"Authors: {authors}\n"
-        # Add abstract if present
-        if abstract:
-            context += f"Abstract: {abstract}\n"
 
-        # Add main text/context
-        if text:
-            context += f"Context: {text}\n"
-        print(f"Context: {context}")
-        answer = await generate_answer_with_citations(query, context, doc_path=doc_path, model=model)
-        print(f"Answer: {answer}")
-        doc_info['answer'] = answer
+    to_run: List[Dict[str, Any]] = []
+    for doc_info in all_trees_node_maps:
+        if not str(doc_info.get("context", "")).strip():
+            doc_info["answer"] = ""
+        else:
+            to_run.append(doc_info)
+    if not to_run:
+        return all_trees_node_maps
+
+    async def _one(doc_info: Dict[str, Any]) -> None:
+        context = _build_context(doc_info)
+        doc_path = doc_info.get("doc_path") or doc_info.get("path", "")
+        # print(f"Context: {context}")
+        
+        answer = await generate_answer_with_citations(
+            query, context, doc_path=doc_path, model=model
+        )
+        # print(f"Answer: {answer}")
+        doc_info["answer"] = answer
+
+    results = await asyncio.gather(
+        *(_one(d) for d in to_run),
+        return_exceptions=True,
+    )
+    for doc_info, res in zip(to_run, results):
+        if isinstance(res, Exception):
+            print(f"generate_answer_for_each_context error for {doc_info.get('path')}: {res}")
+            doc_info["answer"] = ""
 
     return all_trees_node_maps
 

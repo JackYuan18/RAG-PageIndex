@@ -33,6 +33,7 @@ import json
 import argparse
 import asyncio
 import textwrap
+import time
 from collections import defaultdict
 from typing import List, Dict, Any, Optional
 from dotenv import load_dotenv
@@ -93,8 +94,20 @@ async def rag_query(query: str, model: Optional[str] = None, doc_index_path: Opt
     if not doc_index:
         return {
             "error": "No DocIndex found. Please run run_pageindex.py first.",
-            "query": query
+            "query": query,
+            "step_timings": [],
+            "matched_document_count": 0,
+            "retrieved_node_count": 0,
         }
+
+    step_timings: List[Dict[str, Any]] = []
+    _t0 = time.perf_counter()
+
+    def end_step(name: str) -> None:
+        nonlocal _t0
+        t1 = time.perf_counter()
+        step_timings.append({"step": name, "seconds": round(t1 - _t0, 3)})
+        _t0 = t1
     
     log(f"Query: {query}\n")
     log("=" * 80)
@@ -102,12 +115,16 @@ async def rag_query(query: str, model: Optional[str] = None, doc_index_path: Opt
     # Match query to keywords
     log("\nStep 1: Matching query to keywords in DocIndex...")
     matched_docs = match_query_to_keywords(query, doc_index, model=model)
+    end_step("Step 1: Match keywords")
     
     if not matched_docs:
         return {
             "error": "No documents found matching the query.",
             "query": query,
-            "matched_documents": []
+            "matched_documents": [],
+            "step_timings": step_timings,
+            "matched_document_count": 0,
+            "retrieved_node_count": 0,
         }
     
     log(f"Found {len(matched_docs)} matching document(s):")
@@ -121,13 +138,16 @@ async def rag_query(query: str, model: Optional[str] = None, doc_index_path: Opt
     for structure_path in matched_docs:
         structure = load_document_structure(structure_path, results_dir=RESULTS_DIR, project_root=PROJECT_ROOT)
         all_trees_node_maps = extract_tree_and_node_map(structure, structure_path, all_trees_node_maps)
-        
+    end_step("Step 2: Load document structures")
     
     if not all_trees_node_maps:
         return {
             "error": "Could not load any document structures.",
             "query": query,
-            "matched_documents": matched_docs
+            "matched_documents": matched_docs,
+            "step_timings": step_timings,
+            "matched_document_count": len(matched_docs),
+            "retrieved_node_count": 0,
         }
     
     # Perform tree search for each document
@@ -138,11 +158,11 @@ async def rag_query(query: str, model: Optional[str] = None, doc_index_path: Opt
         log(f"\nSearching in: {os.path.basename(doc_info['path'])}")
         search_result = await tree_search(query, doc_info, model=model)
         
-        thinking = search_result.get('thinking', 'N/A')
-        print(f"\nReasoning Process:")
+        # thinking = search_result.get('thinking', 'N/A')
+        # print(f"\nReasoning Process:")
         # Use callback-aware print_wrapped
-        wrapped_thinking = textwrap.fill(thinking, width=80)
-        print(wrapped_thinking)
+        # wrapped_thinking = textwrap.fill(thinking, width=80)
+        # print(wrapped_thinking)
         
         node_ids = search_result.get('node_list', [])
         # Use callback-aware print_retrieved_nodes
@@ -151,10 +171,11 @@ async def rag_query(query: str, model: Optional[str] = None, doc_index_path: Opt
             if node_id in doc_info['node_map']:
                 node = doc_info['node_map'][node_id]
                 retrieved_lines.append(f"  Node ID: {node['node_id']}\t Page: {node.get('page_index', node.get('start_index', 'N/A'))}\t Title: {node.get('title', 'Unknown')}")
-        retrieved_info = "\n".join(retrieved_lines)
-        print(retrieved_info)
+        # retrieved_info = "\n".join(retrieved_lines)
+        # print(retrieved_info)
  
         doc_info['retrieved_node_ids'] = node_ids
+    end_step("Step 3: Tree search")
     
     # Extract context from retrieved nodes
     log("\nStep 4: Extracting context from retrieved nodes...")
@@ -167,13 +188,14 @@ async def rag_query(query: str, model: Optional[str] = None, doc_index_path: Opt
         doc_info['context'] = context
         
         print(f"  Extracted {len(context)} characters from {os.path.basename(doc_info['path'])}")
-    # print(f"all_contexts length: {len(all_contexts)}")
-    # Combine all contexts
+    end_step("Step 4: Extract context")
     
     # Generate answer with inline citations
     log("\nStep 5: Generating answer...")
     all_trees_node_maps_with_answers = await generate_answer_for_each_context(query, all_trees_node_maps, model=model)
+    end_step("Step 5a: Per-document answers")
     answer, citation_sources = await combine_answers(query, all_trees_node_maps_with_answers, model=model)
+    end_step("Step 5b: Combine answer")
     
     log("\n" + "=" * 80)
     log("\nAnswer:")
@@ -186,12 +208,19 @@ async def rag_query(query: str, model: Optional[str] = None, doc_index_path: Opt
         if len(d.get("context", "")) > 0
     ]
     
+    retrieved_node_count = sum(
+        len(d.get("retrieved_node_ids", [])) for d in all_trees_node_maps
+    )
+    
     return {
         "query": query,
         "matched_documents": matched_docs,
         "retrieved_contexts": retrieved_contexts,
         "answer": answer,
         "sources": citation_sources,
+        "step_timings": step_timings,
+        "matched_document_count": len(matched_docs),
+        "retrieved_node_count": retrieved_node_count,
     }
 
 
@@ -238,9 +267,10 @@ def main():
     else:
         print(f"\n\nSummary:")
         print(f"  Query: {result['query']}")
-        print(f"  Matched Documents: {len(result['matched_documents'])}")
-        # print(f"  Total Retrieved Contexts: {len(result['retrieved_contexts'])}")
-        print(f"  Context Length: {result['context_length']} characters")
+        print(f"  Matched Documents: {result.get('matched_document_count', len(result.get('matched_documents') or []))}")
+        print(f"  Nodes retrieved for context: {result.get('retrieved_node_count', 0)}")
+        ctx_len = sum(len((c or {}).get("context") or "") for c in (result.get("retrieved_contexts") or []))
+        print(f"  Context Length: {ctx_len} characters")
 
 
 if __name__ == "__main__":
