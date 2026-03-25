@@ -4,6 +4,8 @@ import copy
 import math
 import random
 import re
+import time
+from typing import Any, Dict, List, Optional
 from .utils import *
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -1411,7 +1413,19 @@ async def extract_title_and_authors(page_list, max_pages_to_inspect=10, model=No
     if "authors" not in out:
         out["authors"] = ""
     return out
-def page_index_main(doc, opt=None):
+
+
+def _record_step_time(
+    step_timings: Optional[List[Dict[str, Any]]], label: str, t0: float
+) -> None:
+    elapsed = time.perf_counter() - t0
+    sec = round(elapsed, 3)
+    if step_timings is not None:
+        step_timings.append({"step": label, "seconds": sec})
+    print(f"  {label} — completed in {elapsed:.2f} s")
+
+
+def page_index_main(doc, opt=None, step_timings: Optional[List[Dict[str, Any]]] = None):
     logger = JsonLogger(doc)
 
     is_valid_pdf = (
@@ -1421,55 +1435,74 @@ def page_index_main(doc, opt=None):
     if not is_valid_pdf:
         raise ValueError("Unsupported input type. Expected a PDF file path or BytesIO object.")
 
-    print(f'Parsing PDF {doc}...')
+    print("Step 1: Parsing PDF...")
+    t0 = time.perf_counter()
     page_list = get_page_tokens(doc)
     logger.info({'page_list': page_list})
     logger.info({'total_page_number': len(page_list)})
     logger.info({'total_token': sum([page[1] for page in page_list])})
-    # Extract title and authors from the first N pages of page_list
-    
+    _record_step_time(step_timings, "Step 1: Parsing PDF", t0)
 
-    # Example use: extract metadata from first 10 pages (default)
+    print("Step 2: Extracting title and authors...")
+    t0 = time.perf_counter()
     doc_title_authors = asyncio.run(extract_title_and_authors(page_list, model=opt.model))
     logger.info({'extracted_title': doc_title_authors.get('title'), 'extracted_authors': doc_title_authors.get('authors')})
-    async def page_index_builder():
-        structure = await tree_parser(page_list, opt, doc=doc, logger=logger)
-        if opt.if_add_node_id == 'yes':
-            write_node_id(structure)    
-        if opt.if_add_node_text == 'yes':
-            add_node_text(structure, page_list)
-        if opt.if_add_node_summary == 'yes':
-            if opt.if_add_node_text == 'no':
-                add_node_text(structure, page_list)
-            await generate_summaries_for_structure(structure, model=opt.model)
-            if opt.if_add_parent_node_summary == 'yes':
-                print('Generating parent node summaries...')
-                await generate_parent_node_summaries_for_structure(structure, model=opt.model)
-            if opt.if_add_node_text == 'no':
-                remove_structure_text(structure)
-            if opt.if_add_doc_description == 'yes':
-                # Create a clean structure without unnecessary fields for description generation
-                clean_structure = create_clean_structure_for_description(structure)
-                doc_description = generate_doc_description(clean_structure, model=opt.model)
-                if opt.if_add_doc_abstract == 'yes':
-                    clean_structure = create_clean_structure_for_abstract(structure)
-                    doc_abstract = generate_doc_abstract(clean_structure, model=opt.model)
-                    keywords = generate_keywords(doc_abstract, model=opt.model)
+    _record_step_time(step_timings, "Step 2: Extracting title and authors", t0)
 
-                return {
-                    'doc_name': get_pdf_name(doc),
-                    'doc_path': doc,
-                    'doc_title': doc_title_authors.get('title'),
-                    'doc_authors': doc_title_authors.get('authors'),
-                    'keywords': keywords,
-                    'doc_description': doc_description,
-                    'doc_abstract': doc_abstract,
-                    'structure': structure 
-                }
+    async def page_index_builder():
+        print("Step 3: Building tree structure...")
+        t0 = time.perf_counter()
+        structure = await tree_parser(page_list, opt, doc=doc, logger=logger)
+        _record_step_time(step_timings, "Step 3: Building tree structure", t0)
+
+        print("Step 4: Adding node ids...")
+        t0 = time.perf_counter()
+        write_node_id(structure)
+        _record_step_time(step_timings, "Step 4: Adding node ids", t0)
+
+        print("Step 5: Adding node text...")
+        t0 = time.perf_counter()
+        add_node_text(structure, page_list)
+        _record_step_time(step_timings, "Step 5: Adding node text", t0)
+
+        print("Step 6: Generating summaries for structure...")
+        t0 = time.perf_counter()
+        await generate_summaries_for_structure(structure, model=opt.model)
+        _record_step_time(step_timings, "Step 6: Generating node summaries", t0)
+
+        print("Step 7: Generating parent node summaries...")
+        t0 = time.perf_counter()
+        await generate_parent_node_summaries_for_structure(structure, model=opt.model)
+        _record_step_time(step_timings, "Step 7: Generating parent node summaries", t0)
+
+        print("Step 8: Generating document description...")
+        t0 = time.perf_counter()
+        clean_structure = create_clean_structure_for_description(structure)
+        doc_description = generate_doc_description(clean_structure, model=opt.model)
+        _record_step_time(step_timings, "Step 8: Generating document description", t0)
+
+        print("Step 9: Generating document abstract...")
+        t0 = time.perf_counter()
+        clean_structure = create_clean_structure_for_abstract(structure)
+        doc_abstract = generate_doc_abstract(clean_structure, model=opt.model)
+        _record_step_time(step_timings, "Step 9: Generating document abstract", t0)
+
+        print("Step 10: Generating keywords...")
+        t0 = time.perf_counter()
+        keywords = generate_keywords(doc_abstract, model=opt.model)
+        _record_step_time(step_timings, "Step 10: Generating keywords", t0)
+
         return {
-            'doc_name': get_pdf_name(doc),
-            'structure': structure,
-        }
+                'doc_name': get_pdf_name(doc),
+                'doc_path': doc,
+                'doc_title': doc_title_authors.get('title'),
+                'doc_authors': doc_title_authors.get('authors'),
+                'keywords': keywords,
+                'doc_description': doc_description,
+                'doc_abstract': doc_abstract,
+                'structure': structure 
+                }
+
 
     return asyncio.run(page_index_builder())
 

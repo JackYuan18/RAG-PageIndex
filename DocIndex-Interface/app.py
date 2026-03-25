@@ -3,7 +3,7 @@
 Web UI to manage Database documents, DocIndex.json, and structure files.
 
 Runs build_docindex.py (full reconstruction) and run_pageindex.py per document
-(Add to DocIndex / Update Structure).
+with --update_docindex (structure + DocIndex).
 """
 
 from __future__ import annotations
@@ -227,10 +227,10 @@ def api_reconstruct():
 def api_process_document():
     data = request.get_json(silent=True) or {}
     filename = data.get("filename") or ""
-    mode = data.get("mode") or ""
+    mode = (data.get("mode") or "update_structure").strip()
     model = (data.get("model") or "qwen").strip() or "qwen"
 
-    if mode not in ("add_to_docindex", "update_structure"):
+    if mode != "update_structure":
         return jsonify({"success": False, "error": "Invalid mode"}), 400
 
     if not _is_safe_database_file(filename):
@@ -246,6 +246,7 @@ def api_process_document():
         ), 400
 
     abs_path = os.path.realpath(os.path.join(DATABASE_DIR, filename))
+
     py = sys.executable
     run_script = os.path.join(project_root, "run_pageindex.py")
     cmd = [
@@ -255,16 +256,10 @@ def api_process_document():
         abs_path,
         "--model",
         model,
+        "--update_docindex",
     ]
-    if mode == "add_to_docindex":
-        cmd.append("--update_docindex")
 
-    label = (
-        "Add to DocIndex"
-        if mode == "add_to_docindex"
-        else "Update structure (no DocIndex merge)"
-    )
-    job_id = _start_job(cmd, f"{label}: {filename}")
+    job_id = _start_job(cmd, f"run_pageindex --update_docindex: {filename}")
     return jsonify({"success": True, "job_id": job_id})
 
 
@@ -294,4 +289,4 @@ if __name__ == "__main__":
     print(f"DocIndex interface: {open_url}")
     print(f"Database: {DATABASE_DIR}")
     print(f"DocIndex: {DOCINDEX_PATH}")
-    app.run(debug=True, host=host, port=port)
+    app.run(debug=True, host=host, port=port, use_reloader=False)

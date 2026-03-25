@@ -243,4 +243,4 @@ if __name__ == '__main__':
     print(f"DocIndex path: {DOCINDEX_PATH}")
     print(f"Server will open at {url}")
     
-    app.run(debug=True, host=host, port=port)
+    app.run(debug=True, host=host, port=port, use_reloader=False)

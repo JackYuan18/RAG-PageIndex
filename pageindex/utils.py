@@ -620,12 +620,12 @@ def check_token_limit(structure, limit=110000):
     list = structure_to_list(structure)
     for node in list:
         num_tokens = count_tokens(node['text'], model='gpt-4o')
-        if num_tokens > limit:
-            print(f"Node ID: {node['node_id']} has {num_tokens} tokens")
-            print("Start Index:", node['start_index'])
-            print("End Index:", node['end_index'])
-            print("Title:", node['title'])
-            print("\n")
+        # if num_tokens > limit:
+        #     print(f"Node ID: {node['node_id']} has {num_tokens} tokens")
+        #     print("Start Index:", node['start_index'])
+        #     print("End Index:", node['end_index'])
+        #     print("Title:", node['title'])
+        #     print("\n")
 
 
 def convert_physical_index_to_int(data):

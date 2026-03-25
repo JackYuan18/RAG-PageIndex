@@ -1,9 +1,31 @@
 import argparse
-import os
 import json
+import os
+import time
+from collections import defaultdict
+from typing import Any, Dict, List
+
 from pageindex import *
 from pageindex.page_index_md import md_to_tree
-from collections import defaultdict
+
+
+def _finish_step(step_timings: List[Dict[str, Any]], label: str, t0: float) -> None:
+    elapsed = time.perf_counter() - t0
+    sec = round(elapsed, 3)
+    step_timings.append({"step": label, "seconds": sec})
+    print(f"  {label} — completed in {elapsed:.2f} s")
+
+
+def _print_processing_summary(
+    doc_name: str, step_timings: List[Dict[str, Any]], t_start: float
+) -> None:
+    total = time.perf_counter() - t_start
+    print("")
+    print(f"========== Processing complete: {doc_name} ==========")
+    print(f"Total processing time: {total:.2f} s")
+    for item in step_timings:
+        print(f"  {item['step']}: {item['seconds']:.2f} s")
+    print("=" * max(60, 42 + len(doc_name)))
 
 def normalize_doc_index_to_sets(doc_index):
     """
@@ -97,65 +119,87 @@ def merge_keywords(keywords, doc_index, model=None):
 
 
 def process_document(pdf_path, output_dir, opt, update_docindex=True):
-    
-    
-    # Process the PDF
+    step_timings: List[Dict[str, Any]] = []
+    doc_index = defaultdict(set)
+    t_process = time.perf_counter()
+    doc_name = os.path.basename(pdf_path)
+
     try:
-        toc_with_page_number = page_index_main(pdf_path, opt)
-        print('Parsing done, saving to file...')
-        
-        # Save results
-        pdf_name = os.path.splitext(os.path.basename(pdf_path))[0]    
-        output_dir = './results'
-        output_file = f'{output_dir}/{pdf_name}_structure.json'
+        toc_with_page_number = page_index_main(
+            pdf_path, opt, step_timings=step_timings
+        )
+
+        pdf_name = os.path.splitext(os.path.basename(pdf_path))[0]
+        output_dir = "./results"
+        output_file = f"{output_dir}/{pdf_name}_structure.json"
         os.makedirs(output_dir, exist_ok=True)
-        
-        with open(output_file, 'w', encoding='utf-8') as f:
+
+        print("Step 11: Saving structure JSON...")
+        t0 = time.perf_counter()
+        with open(output_file, "w", encoding="utf-8") as f:
             json.dump(toc_with_page_number, f, indent=2)
-        
-        print(f'Tree structure saved to: {output_file}')
-        
-        # Update DocIndex
+        print(f"Tree structure saved to: {output_file}")
+        _finish_step(step_timings, "Step 11: Saving structure JSON", t0)
+
         if update_docindex:
-            print('Updating DocIndex...', update_docindex)
-
             doc_index_path = os.path.join(output_dir, "DocIndex.json")
-            doc_index = defaultdict(set)
 
-            # Try to load if exists
+            print("Step 12: Loading DocIndex and removing old references for this document...")
+            t0 = time.perf_counter()
             if os.path.exists(doc_index_path):
                 try:
                     with open(doc_index_path, "r", encoding="utf-8") as f:
                         loaded_dict = json.load(f)
-                        # Normalize loaded values (list/set/str) to sets
                         doc_index = normalize_doc_index_to_sets(loaded_dict)
                 except Exception as e:
                     print(f"Warning: Could not load existing DocIndex, starting fresh. ({e})")
-                      
+                    doc_index = defaultdict(set)
 
-            # Get the list of keywords from the tree structure
+            keys_to_remove = []
+            for key, val_set in list(doc_index.items()):
+                if output_file in val_set:
+                    val_set.discard(output_file)
+                if not val_set:
+                    keys_to_remove.append(key)
+            for key in keys_to_remove:
+                del doc_index[key]
+
             keywords = []
-            if 'keywords' in toc_with_page_number:
-                keywords = toc_with_page_number['keywords'].split(',')
-            print(f'Keywords: {keywords}')
+            if "keywords" in toc_with_page_number:
+                keywords = toc_with_page_number["keywords"].split(",")
+            print(f"Keywords: {keywords}")
+            _finish_step(
+                step_timings,
+                "Step 12: Load DocIndex and prune old references",
+                t0,
+            )
 
-            merged_keywords, doc_index = merge_keywords(keywords, doc_index, model=opt.model)
-
-            
-            # Add new keywords to the DocIndex
-            # Register each keyword in the DocIndex
+            print("Step 13: Merging keywords into DocIndex...")
+            t0 = time.perf_counter()
+            merged_keywords, doc_index = merge_keywords(
+                keywords, doc_index, model=opt.model
+            )
             for kw in merged_keywords:
                 doc_index[kw].add(output_file)
+            _finish_step(step_timings, "Step 13: Merging keywords into DocIndex", t0)
 
-            # Save the updated DocIndex
+            print("Step 14: Writing DocIndex.json...")
+            t0 = time.perf_counter()
             with open(doc_index_path, "w", encoding="utf-8") as f:
-                json.dump(serialize_doc_index_for_json(doc_index), f, indent=2, ensure_ascii=False)
-            
-            # print(f'Updated DocIndex saved to: {doc_index_path}')
+                json.dump(
+                    serialize_doc_index_for_json(doc_index),
+                    f,
+                    indent=2,
+                    ensure_ascii=False,
+                )
+            _finish_step(step_timings, "Step 14: Saving DocIndex.json", t0)
+
+        _print_processing_summary(doc_name, step_timings, t_process)
         return True, doc_index
     except Exception as e:
         print(f"Error processing PDF {pdf_path}: {e}")
         import traceback
+
         traceback.print_exc()
         return False, doc_index
     

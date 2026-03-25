@@ -50,6 +50,12 @@
         .btn-secondary { background: rgba(255,255,255,.2); color: #fff; border: 1px solid rgba(255,255,255,.45); }
         .btn-row { background: #f0fdfa; color: #115e59; border: 1px solid #99f6e4; padding: 8px 14px; font-size: 0.82rem; }
         .btn-row.danger-outline { background: #fff7ed; color: #9a3412; border-color: #fdba74; }
+        .btn-row[data-locked="1"]:disabled {
+            opacity: 0.45;
+            background: #f1f5f9;
+            color: #94a3b8;
+            border-color: #e2e8f0;
+        }
         .section { padding: 22px 28px; }
         .section h2 { font-size: 1rem; color: #334155; margin-bottom: 12px; }
         .meta {
@@ -78,6 +84,18 @@
         tr.doc-row { cursor: pointer; }
         tr.doc-row:hover { background: #f1f5f9; }
         tr.doc-row td:first-child { font-weight: 500; color: #0f172a; }
+        .doc-name { font-weight: 500; color: #0f172a; }
+        .doc-processing-summary {
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px dashed #e2e8f0;
+            font-size: 0.76rem;
+            color: #64748b;
+            line-height: 1.45;
+            cursor: default;
+        }
+        .doc-processing-summary .doc-total-time { margin-bottom: 4px; color: #475569; }
+        .doc-processing-summary .doc-step-line { color: #64748b; }
         .actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
         .progress-log {
             margin: 10px 0 0;
@@ -175,6 +193,55 @@
         // Tracks which UI progress bar to show: full DocIndex rebuild vs. one document row.
         let activeJobContext = null;
 
+        const SUMMARIES_KEY = 'docindex_last_summaries';
+
+        function loadAllSummaries() {
+            try {
+                return JSON.parse(sessionStorage.getItem(SUMMARIES_KEY) || '{}');
+            } catch (e) {
+                return {};
+            }
+        }
+
+        let docProcessingSummaries = loadAllSummaries();
+
+        function saveProcessingSummary(filename, totalSeconds, stepLines) {
+            docProcessingSummaries[filename] = {
+                totalSeconds: String(totalSeconds),
+                stepLines: Array.isArray(stepLines) ? stepLines : [],
+            };
+            try {
+                sessionStorage.setItem(SUMMARIES_KEY, JSON.stringify(docProcessingSummaries));
+            } catch (e) { /* ignore quota */ }
+        }
+
+        function parseProcessingSummary(output) {
+            const re = /========== Processing complete: [^\n]+ ==========\s*\nTotal processing time: ([\d.]+) s\n([\s\S]*?)\n={10,}/m;
+            const m = (output || '').match(re);
+            if (!m) return null;
+            const stepLines = (m[2] || '')
+                .split('\n')
+                .map((line) => line.trim())
+                .filter((line) => line.length > 0);
+            return { totalSeconds: m[1], stepLines };
+        }
+
+        function formatSummaryUnderName(filename) {
+            const s = docProcessingSummaries[filename];
+            if (!s) return '';
+            const stepLinesHtml = (s.stepLines || [])
+                .map((line) => '<div class="doc-step-line">' + escapeHtml(line) + '</div>')
+                .join('');
+            return (
+                '<div class="doc-processing-summary" onclick="event.stopPropagation()">' +
+                '<div class="doc-total-time">Processing finished in <strong>' +
+                escapeHtml(s.totalSeconds) +
+                ' s</strong></div>' +
+                stepLinesHtml +
+                '</div>'
+            );
+        }
+
         function clearProgressLogElements() {
             const r = document.getElementById('reconstructProgressLog');
             if (r) r.textContent = '';
@@ -251,7 +318,20 @@
 
         function setButtonsBusy(busy) {
             document.getElementById('btnReconstruct').disabled = busy;
-            document.querySelectorAll('.btn-row').forEach((b) => { b.disabled = busy; });
+            document.querySelectorAll('.btn-row').forEach((b) => {
+                if (busy) {
+                    b.disabled = true;
+                } else {
+                    b.disabled = b.getAttribute('data-locked') === '1';
+                }
+            });
+        }
+
+        function escapeAttr(s) {
+            return String(s)
+                .replace(/&/g, '&amp;')
+                .replace(/"/g, '&quot;')
+                .replace(/</g, '&lt;');
         }
 
         async function fetchOverview() {
@@ -286,27 +366,33 @@
             }
             const rows = docs.map((d) => {
                 const pdfOk = d.kind === 'pdf';
+                const inIndex = !!d.in_docindex;
                 const statusBits = [];
                 if (d.structure_exists) statusBits.push('structure');
-                if (d.in_docindex) statusBits.push('in DocIndex');
+                if (inIndex) statusBits.push('in DocIndex');
                 const status = statusBits.length ? statusBits.join(' · ') : '—';
-                const disabledAttr = pdfOk ? '' : ' disabled title="Only PDF is supported for PageIndex in this project"';
+                const actionLocked = !pdfOk;
+                const btnLabel = inIndex ? 'Update Structure' : 'Add Structure to DocIndex';
+                const actionTitleAttr = actionLocked
+                    ? ` title="${escapeAttr('Only PDF is supported for PageIndex in this project')}"`
+                    : ` title="${escapeAttr('Runs run_pageindex.py --update_docindex: builds/refreshes structure JSON and updates DocIndex.json')}"`;
                 const fnEnc = encodeURIComponent(d.filename);
+                const progressLabel = escapeAttr(btnLabel + ': ' + d.filename);
+                const underName = formatSummaryUnderName(d.filename);
                 return `
                     <tr class="doc-row" data-open="${d.open_url}" data-filename="${fnEnc}">
-                        <td>${escapeHtml(d.filename)}</td>
+                        <td><div class="doc-name">${escapeHtml(d.filename)}</div>${underName}</td>
                         <td><span class="meta">${escapeHtml(d.kind.toUpperCase())}</span></td>
                         <td><span class="meta">${escapeHtml(status)}</span></td>
                         <td>
                             <div class="actions">
-                                <button type="button" class="btn btn-row"${disabledAttr} data-action="add" data-filename="${fnEnc}">Add to DocIndex</button>
-                                <button type="button" class="btn btn-row danger-outline"${disabledAttr} data-action="update" data-filename="${fnEnc}">Update Structure</button>
+                                <button type="button" class="btn btn-row danger-outline" data-filename="${fnEnc}"${actionLocked ? ' disabled' : ''}${actionTitleAttr}>${escapeHtml(btnLabel)}</button>
                             </div>
                         </td>
                     </tr>
                     <tr class="doc-progress-row" data-filename="${fnEnc}" aria-hidden="true">
                         <td colspan="4">
-                            <div class="row-progress-track" role="progressbar" aria-label="Processing ${escapeHtml(d.filename)}">
+                            <div class="row-progress-track" role="progressbar" aria-label="${progressLabel}">
                                 <div class="row-progress-fill"></div>
                             </div>
                             <pre class="progress-log" aria-live="polite"></pre>
@@ -333,13 +419,12 @@
                     if (url) window.open(url, '_blank', 'noopener,noreferrer');
                 });
             });
-            wrap.querySelectorAll('button[data-action]').forEach((btn) => {
+            wrap.querySelectorAll('.actions button[data-filename]').forEach((btn) => {
                 btn.addEventListener('click', (ev) => {
                     ev.stopPropagation();
-                    const mode = btn.getAttribute('data-action') === 'add' ? 'add_to_docindex' : 'update_structure';
                     let filename = btn.getAttribute('data-filename') || '';
                     try { filename = decodeURIComponent(filename); } catch (e) { /* keep raw */ }
-                    startProcessDocument(filename, mode);
+                    startProcessDocument(filename);
                 });
             });
         }
@@ -372,6 +457,14 @@
             }
             updateProgressLogs(out);
             if (job.status === 'done' || job.status === 'failed') {
+                const ctx = activeJobContext;
+                const ok = job.status === 'done' && Number(job.returncode) === 0;
+                if (ok && ctx && ctx.kind === 'document' && ctx.filename) {
+                    const parsed = parseProcessingSummary(out);
+                    if (parsed) {
+                        saveProcessingSummary(ctx.filename, parsed.totalSeconds, parsed.stepLines);
+                    }
+                }
                 stopPoll();
                 setButtonsBusy(false);
                 activeJobId = null;
@@ -417,7 +510,7 @@
             }
         }
 
-        async function startProcessDocument(filename, mode) {
+        async function startProcessDocument(filename) {
             setButtonsBusy(true);
             activeJobContext = { kind: 'document', filename };
             clearProgressLogElements();
@@ -427,7 +520,7 @@
                 const r = await fetch('/api/process-document', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ filename, mode }),
+                    body: JSON.stringify({ filename, mode: 'update_structure' }),
                 });
                 const data = await r.json();
                 if (!r.ok || !data.success) {
