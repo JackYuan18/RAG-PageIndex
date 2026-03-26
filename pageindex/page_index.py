@@ -166,6 +166,10 @@ def toc_detector_single_page(content, model=None):
     - Bibliography or references sections
     - Just having section headings does NOT mean there's a TOC
 
+    NOTE: 
+    - A table of contents can contain the page numbers for the lists of figures, tables, and abbreviations before the chapter titles.
+     
+
     A research paper with section headings but NO dedicated TOC page should be detected as "no".
 
     Return the following JSON format:
@@ -194,7 +198,7 @@ def toc_detector_single_page(content, model=None):
     json_content = extract_json(response)    
     # print(f'toc_detector_single_page response: {response}')
     # print(f'toc_detector_single_page json_content: {json_content}')
-    return json_content['toc_detected']
+    return json_content#['toc_detected']
 
 
 def check_if_toc_extraction_is_complete(content, toc, model=None):
@@ -245,11 +249,13 @@ def check_if_toc_transformation_is_complete(content, toc, model=None):
     }}
     Directly return the final JSON structure. Do not output anything else.
     
-    IMPORTANT: You must respond with the format above.
-    Do not include any explanation, reasoning, or additional text.
-    Do not use markdown formatting or code blocks.
-    Just return the final JSON structure.
-    
+    IMPORTANT: 
+    -You must respond with the format above.
+    - Do not include any explanation, reasoning, or additional text.
+    - Do not use markdown formatting or code blocks.
+    - Just return the final JSON structure.
+    - Ignore the lists of figures, tables, and abbreviations. 
+
     """
 
     prompt['user_prompt'] = f"""
@@ -503,7 +509,7 @@ def toc_transformer(toc_content, model=None, logger=None):
     print('Done for the first part')
     cnt = 1
     last_complete = get_json_content(last_complete)
-    while not (if_complete == "yes" and finish_reason == "finished") and cnt < 20:
+    while not (if_complete == "yes" and finish_reason == "finished") and cnt < 5:
         cnt += 1
         # print(f'Working on the {cnt}th part')
         # print(f'last_complete: {last_complete}, finish_reason: {finish_reason}, if_complete: {if_complete}, thinking: {_}')
@@ -551,12 +557,13 @@ def toc_transformer(toc_content, model=None, logger=None):
         if_complete,_ = check_if_toc_transformation_is_complete(toc_content, last_complete, model)
         logger.info(f'toc_content: {toc_content}')
         logger.info(f'toc_transformer new_complete: {new_complete}, if_complete: {if_complete}, thinking: {_}')
-    if cnt >= 20:
+    if cnt >= 5:
         raise Exception('toc_transformer failed to complete')
     last_complete = json.loads(last_complete)
 
     cleaned_response=convert_page_to_int(last_complete['table_of_contents'])
     return cleaned_response
+    
     
 
 
@@ -572,12 +579,13 @@ def find_toc_pages(start_page_index, page_list, opt, logger=None):
         if i >= opt.toc_check_page_num and not last_page_is_yes:
             break
         detected_result = toc_detector_single_page(page_list[i][0],model=opt.model)
-        if detected_result == 'yes':
+        logger.info(f'Page {i} detected_result: {detected_result}')
+        if detected_result['toc_detected'] == 'yes':
             if logger:
                 logger.info(f'Page {i} has toc')
             toc_page_list.append(i)
             last_page_is_yes = True
-        elif detected_result == 'no' and last_page_is_yes:
+        elif detected_result['toc_detected'] == 'no' and last_page_is_yes:
             if logger:
                 logger.info(f'Found the last page with toc: {i-1}')
             break
@@ -960,7 +968,7 @@ def process_none_page_numbers(toc_items, page_list, start_index=1, model=None):
 
 
 def check_toc(page_list, opt=None,logger=None):
-    toc_page_list = find_toc_pages(start_page_index=0, page_list=page_list, opt=opt)
+    toc_page_list = find_toc_pages(start_page_index=0, page_list=page_list, opt=opt, logger=logger)
     if len(toc_page_list) == 0:
         print('no toc found')
         return {'toc_content': None, 'toc_page_list': [], 'page_index_given_in_toc': 'no'}

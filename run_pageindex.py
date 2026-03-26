@@ -207,7 +207,7 @@ if __name__ == "__main__":
     # Set up argument parser
     parser = argparse.ArgumentParser(description='Process PDF or Markdown document and generate structure')
     # parser.add_argument('--pdf_path', type=str, default = '/home/zyuan/NSTSCE_Bot/NSTSCE/Database/NSTSCE_L3System_Final.pdf', help='Path to the PDF file')
-    parser.add_argument('--pdf_path', type=str, default = '/home/zyuan/NSTSCE_Bot/NSTSCE/Database/Communication-aware_Distributed_Gaussian_Process_Regression_Algorithms_for_Real-time_Machine_Learning.pdf', help='Path to the PDF file')
+    parser.add_argument('--pdf_path', type=str, default = '/home/zyuan/NSTSCE_Bot/PageIndex/Database/AAA NSTSCE Training Drivers on L2 Systems.pdf', help='Path to the PDF file')
     parser.add_argument('--md_path', type=str, help='Path to the Markdown file')
 
     # parser.add_argument('--model', type=str, default='gpt-5.1', help='Model to use')
