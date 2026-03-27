@@ -7,7 +7,7 @@ from typing import Any, Dict, List
 
 from pageindex import *
 from pageindex.page_index_md import md_to_tree
-
+from datetime import datetime
 
 def _finish_step(step_timings: List[Dict[str, Any]], label: str, t0: float) -> None:
     elapsed = time.perf_counter() - t0
@@ -97,6 +97,7 @@ def merge_keywords(keywords, doc_index, model=None):
 
     updated_keywords = keywords.copy()
     updated_doc_index = doc_index.copy()
+    sim_cache = {}
 
     for i, new_kw in enumerate(keywords):
         for existing_kw in list(doc_index.keys()):
@@ -104,8 +105,12 @@ def merge_keywords(keywords, doc_index, model=None):
             # Use AI to determine whether similar in meaning
             if new_kw == existing_kw:
                 continue
-            if keywords_are_similar(new_kw, existing_kw, model=model)=='True':
-                print(f"similar: {new_kw} and {existing_kw}, {keywords_are_similar(new_kw, existing_kw, model=model)}")
+            cache_key = (new_kw, existing_kw)
+            if cache_key not in sim_cache:
+                sim_cache[cache_key] = keywords_are_similar(new_kw, existing_kw, model=model)
+            is_sim = sim_cache[cache_key]
+            if is_sim == 'True':
+                print(f"similar: {new_kw} and {existing_kw}, {is_sim}")
                 # Use AI to create a concise merged keyword
                 merged_kw = make_merged_keyword(new_kw, existing_kw, model=model)
                 # Update doc_index (replace existing_kw with merged_kw, preserve value)
@@ -195,19 +200,19 @@ def process_document(pdf_path, output_dir, opt, update_docindex=True):
             _finish_step(step_timings, "Step 14: Saving DocIndex.json", t0)
 
         _print_processing_summary(doc_name, step_timings, t_process)
-        return True, doc_index
+        return True, doc_index, step_timings, round(time.perf_counter() - t_process, 3)
     except Exception as e:
         print(f"Error processing PDF {pdf_path}: {e}")
         import traceback
 
         traceback.print_exc()
-        return False, doc_index
+        return False, doc_index, step_timings, round(time.perf_counter() - t_process, 3)
     
 if __name__ == "__main__":
     # Set up argument parser
     parser = argparse.ArgumentParser(description='Process PDF or Markdown document and generate structure')
-    # parser.add_argument('--pdf_path', type=str, default = '/home/zyuan/NSTSCE_Bot/NSTSCE/Database/NSTSCE_L3System_Final.pdf', help='Path to the PDF file')
-    parser.add_argument('--pdf_path', type=str, default = '/home/zyuan/NSTSCE_Bot/PageIndex/Database/AAA NSTSCE Training Drivers on L2 Systems.pdf', help='Path to the PDF file')
+    parser.add_argument('--pdf_path', type=str, default = '/home/zyuan/NSTSCE_Bot/NSTSCE/Database/NSTSCE_L3System_Final.pdf', help='Path to the PDF file')
+    # parser.add_argument('--pdf_path', type=str, default = '/home/zyuan/NSTSCE_Bot/PageIndex/Database/Communication-aware_Distributed_Gaussian_Process_Regression_Algorithms_for_Real-time_Machine_Learning.pdf', help='Path to the PDF file')
     parser.add_argument('--md_path', type=str, help='Path to the Markdown file')
 
     # parser.add_argument('--model', type=str, default='gpt-5.1', help='Model to use')
@@ -242,6 +247,8 @@ if __name__ == "__main__":
                       help='Minimum token threshold for thinning (markdown only)')
     parser.add_argument('--summary-token-threshold', type=int, default=200,
                       help='Token threshold for generating summaries (markdown only)')
+    parser.add_argument('--timings-out', type=str, default=None,
+                      help='Optional path to write JSON timings')
     args = parser.parse_args()
     
     output_dir = './results'
@@ -275,10 +282,26 @@ if __name__ == "__main__":
             if_add_doc_abstract=args.if_add_doc_abstract,
             if_add_node_text=args.if_add_node_text
         )
-        success, doc_index = process_document(args.pdf_path, output_dir, opt, args.update_docindex)
+        success, doc_index, step_timings, total_seconds = process_document(args.pdf_path, output_dir, opt, args.update_docindex)
         # Process the PDF
         # toc_with_page_number = page_index_main(args.pdf_path, opt)
         print(f'Parsing done, saving to file... {success}')
+        if args.timings_out:
+            payload = {
+                # INSERT_YOUR_CODE 
+                "test_datetime": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "doc": args.pdf_path,
+                "success": bool(success),
+                "total_seconds": total_seconds,
+                "step_timings": step_timings,
+            }
+            try:
+                os.makedirs(os.path.dirname(args.timings_out) or ".", exist_ok=True)
+                with open(args.timings_out, "w", encoding="utf-8") as f:
+                    json.dump(payload, f, indent=2, ensure_ascii=False)
+                print(f"Wrote timings to: {args.timings_out}")
+            except Exception as e:
+                print(f"Warning: could not write timings JSON: {e}")
         
         
         

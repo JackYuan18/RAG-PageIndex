@@ -22,3 +22,4 @@ __pycache__/
 Database/
 debug/
 results (copy)/
+benchmarks/runs/
