@@ -3,83 +3,130 @@ import json
 import ast
 
 
+# ---------------------------------------------------------------------------
+# Patterns used in both detection and extraction
+# ---------------------------------------------------------------------------
+
+HEADING_RE = re.compile(
+    r'^('
+    r'\d+(?:\.\d+){2,}\s{1,10}.+'          # deep sub-subsections: 2.1.1  Title
+    r'|\d+(?:\.\d+)*\.\s+.+'               # top-level: 1. Scope
+    r'|\d+\.\d+(?:\.\d+)*\s+.+'            # subsections: 1.1 Purpose
+    r'|APPENDIX\s+[A-Z](?:\.\d+)?\s*\.\s+.+'  # APPENDIX A. Title
+    r'|[A-Z]\.\d+\s+.+'                    # appendix sub: C.1 Title
+    r')$'
+)
+
+RUNNING_HEADER_RE = re.compile(r'AVSC Best Practice for Developing')  # adapt per doc
+
+
+def _clean_lines(page_text: str) -> list[str]:
+    """Return non-empty, stripped lines from a page, dropping running headers."""
+    return [
+        l.strip() for l in page_text.split('\n')
+        if l.strip() and not RUNNING_HEADER_RE.search(l)
+    ]
+
+
+# ---------------------------------------------------------------------------
+# TOC page detection
+# ---------------------------------------------------------------------------
+
+TOC_KEYWORDS = re.compile(r'table\s+of\s+contents', re.IGNORECASE)
+TOC_HEADING_DENSITY_THRESHOLD = 0.70   # fraction of lines that look like headings
+
+
+def detect_toc_pages(pages: list[tuple[str, str]]) -> set[str]:
+    """
+    Automatically identify TOC pages by two complementary signals:
+      1. High heading-line density (≥ threshold): almost every line is a heading.
+      2. Presence of a 'Table of Contents' keyword anywhere on the page.
+    A page is flagged as a TOC if BOTH signals are present, OR if density alone
+    is extremely high (≥ 0.90) — catching TOCs that omit the label.
+    """
+    toc_pages = set()
+    for marker, content in pages:
+        lines = _clean_lines(content)
+        if not lines:
+            continue
+        heading_count = sum(1 for l in lines if HEADING_RE.match(l))
+        density = heading_count / len(lines)
+        has_keyword = bool(TOC_KEYWORDS.search(content))
+
+        if density >= 0.90 or (density >= TOC_HEADING_DENSITY_THRESHOLD and has_keyword):
+            toc_pages.add(marker)
+
+    return toc_pages
+
+
+# ---------------------------------------------------------------------------
+# Main extraction
+# ---------------------------------------------------------------------------
+
+SECTION_PATTERNS = [
+    re.compile(r'^(\d+(?:\.\d+){2,})\s{1,10}(.+)$'),           # 2.1.1  Title
+    re.compile(r'^(\d+(?:\.\d+)*)\.\s+(.+)$'),                  # 1. Title
+    re.compile(r'^(\d+\.\d+(?:\.\d+)*)\s+(.+)$'),               # 1.1 Title
+    re.compile(r'^(APPENDIX\s+[A-Z](?:\.\d+)?)\s*\.\s+(.+)$'),  # APPENDIX A. Title
+    re.compile(r'^([A-Z]\.\d+)\s+(.+)$'),                       # C.1 Title
+]
+
+SKIP_PATTERNS = [
+    re.compile(r'^\d{1,2}\s{1,4}[\u201c"a-z]'),  # footnotes
+    re.compile(r'^\[\d+\]'),                        # references
+    re.compile(r'https?://'),                       # URLs
+    re.compile(r'^\d+\s+Commonwealth'),             # address
+    re.compile(r'^\d+\(\d'),                        # journal volume
+    re.compile(r'^\+1\s'),                          # phone
+    RUNNING_HEADER_RE,
+]
+
+
 def transform_text_to_json(text: str) -> list[dict]:
     """
     Transforms document text with <physical_index_N> markers into a structured
-    JSON list of sections and subsections.
+    JSON list of section headings.
 
-    The markers appear as standalone tags (e.g. <physical_index_1>) that delimit
-    page boundaries. Each page's content sits between two consecutive markers.
+    TOC pages are detected automatically based on heading-line density and/or
+    the presence of a 'Table of Contents' label — no hard-coded page index.
 
     Args:
-        text: Raw document text containing <physical_index_N> markers and
-              numbered section headings.
+        text: Raw document text containing <physical_index_N> markers.
 
     Returns:
         List of dicts with keys: "structure", "title", "physical_index"
     """
 
-    # Unescape double-escaped newlines (common when stored as Python list literal)
     text = text.replace('\\n', '\n')
 
-    # Split on the standalone <physical_index_N> markers
-    # Pattern captures the marker name and the text that follows it
+    # Parse pages
     parts = re.split(r'<(physical_index_\d+)>', text)
-    # parts = [pre-first-marker, marker1, content1, marker2, content2, ...]
+    pages = [(parts[i], parts[i + 1]) for i in range(1, len(parts) - 1, 2)]
 
-    # Build list of (physical_index, page_text) pairs
-    pages = []
-    for i in range(1, len(parts) - 1, 2):
-        physical_index = parts[i]
-        page_text = parts[i + 1]
-        pages.append((physical_index, page_text))
-
-    # Regex patterns for section headings (tried in order; first match wins)
-    section_patterns = [
-        # Sub-subsections with extra spaces: "2.1.1  SAE Publications"
-        re.compile(r'^(\d+(?:\.\d+){2,})\s{1,10}(.+)$'),
-        # Top-level numbered sections: "1. Scope", "10. Abbreviations"
-        re.compile(r'^(\d+(?:\.\d+)*)\.\s+(.+)$'),
-        # Subsections without trailing dot: "1.1 Purpose", "5.3.4 Utilize..."
-        re.compile(r'^(\d+\.\d+(?:\.\d+)*)\s+(.+)$'),
-        # Appendix sections: "APPENDIX A. Quick Look"
-        re.compile(r'^(APPENDIX\s+[A-Z](?:\.\d+)?)\.\s+(.+)$'),
-        # Appendix subsections: "C.1 Standard Statistical Measures"
-        re.compile(r'^([A-Z]\.\d+)\s+(.+)$'),
-    ]
-
-    # Skip lines that look like footnotes, references, URLs, or addresses
-    skip_patterns = [
-        re.compile(r'^\d{1,2}\s{1,4}[\u201c"a-z]'),  # footnotes: "1  Other relevant..."
-        re.compile(r'^\[\d+\]'),                        # references: "[1] NHTSA..."
-        re.compile(r'https?://'),                       # URLs
-        re.compile(r'^\d+\s+Commonwealth'),             # street address
-        re.compile(r'^\d+\(\d'),                        # journal volume: "35(2), ..."
-        re.compile(r'^\+1\s'),                          # phone number
-    ]
+    # Auto-detect and skip TOC pages
+    toc_pages = detect_toc_pages(pages)
 
     results = []
-    seen = set()  # Deduplicate across pages
+    seen = set()
 
     for physical_index, page_text in pages:
-        lines = page_text.split('\n')
-        for line in lines:
+        if physical_index in toc_pages:
+            continue
+
+        for line in page_text.split('\n'):
             line = line.strip()
             if not line:
                 continue
-            if any(p.match(line) for p in skip_patterns):
+            if any(p.search(line) for p in SKIP_PATTERNS):
                 continue
 
-            for pattern in section_patterns:
-                match = pattern.match(line)
-                if match:
-                    structure = match.group(1).strip()
-                    title = match.group(2).strip()
+            for pattern in SECTION_PATTERNS:
+                m = pattern.match(line)
+                if m:
+                    structure = m.group(1).strip()
+                    title = re.sub(r'\s{2,}', ' ', m.group(2).strip())
 
-                    # Collapse OCR-introduced extra spaces ("Perform ance" → "Performance")
-                    title = re.sub(r'\s{2,}', ' ', title)
-
-                    # Skip long sentences that look like body text, not headings
+                    # Skip long body-text sentences misidentified as headings
                     if title.endswith('.') and len(title) > 80:
                         continue
 
@@ -91,20 +138,19 @@ def transform_text_to_json(text: str) -> list[dict]:
                             "title": title,
                             "physical_index": f"<{physical_index}>"
                         })
-                    break  # Only match one pattern per line
+                    break
 
     return results
 
 
+# ---------------------------------------------------------------------------
+# I/O helpers
+# ---------------------------------------------------------------------------
+
 def load_text(input_path: str) -> str:
-    """
-    Reads the input file. Handles:
-      - Python list literal wrapping a string (e.g. ['...']).
-      - Plain text.
-    """
+    """Load file, unwrapping Python list literals if needed."""
     with open(input_path, "r", encoding="utf-8") as f:
         raw = f.read()
-
     stripped = raw.strip()
     if stripped.startswith("['") or stripped.startswith('["'):
         items = ast.literal_eval(stripped)

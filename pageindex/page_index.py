@@ -996,11 +996,12 @@ def generate_toc_re(group_texts, logger=None):
     
     return toc_with_page_number
 
-def generate_toc(group_texts, ai_mode=True, model=None, logger=None):
+def generate_toc(group_texts, ai_mode=False, model=None, logger=None):
     if ai_mode:
         return generate_toc_ai(group_texts, model, logger)
     else:
         return generate_toc_re(group_texts, logger)
+        
 def process_no_toc(page_list, start_index=1, model=None, logger=None):
     page_contents=[]
     token_lengths=[]
