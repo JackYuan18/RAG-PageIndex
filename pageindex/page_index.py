@@ -7,6 +7,7 @@ import re
 import time
 from typing import Any, Dict, List, Optional
 from .utils import *
+from .transform_to_json import transform_text_to_json
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -515,9 +516,111 @@ def extract_toc_hierarchy(text):
 
     return entries
 
+def toc_transformer_ai(toc_content, model=None, logger=None):
+    print('start toc_transformer')
+    
+    prompt = {}
+    prompt['system_prompt'] = f"""
+    You are a JSON formatter. Your ONLY job is to output valid JSON.
+    Do not explain, do not comment, do not add any text outside the JSON.
+    
+    Your task is to continue the table of contents json structure, directly output the remaining part of the json structure.
+
+    
+    You are given a table of contents, You job is to transform the whole table of content into a JSON format included table_of_contents.
+
+    structure is the numeric system which represents the index of the hierarchy section in the table of contents. For example, the first section has structure index 1, the first subsection has structure index 1.1, the second subsection has structure index 1.2, etc.
+
+    The response should be in the following JSON format: 
+    {{
+    "table_of_contents": [
+        {{
+            "structure": <structure index, "x.x.x" or None> (string),
+            "title": <title of the section>,
+            "page": <page number or None>,
+        }},
+        ...
+        ],
+    }}
+    IMPORTANT: You should transform the full table of contents in one go.
+    Directly return the final JSON structure as specified in the format.
+    Do not output anything else. """
+
+    prompt['user_prompt'] = f"""
+    Given table of contents: {toc_content}
+    """
 
 
-def toc_transformer(toc_content, model=None, logger=None):
+    
+    last_complete, finish_reason = ChatGPT_API_with_finish_reason(model=model, prompt=prompt)
+    
+    if_complete,_ = check_if_toc_transformation_is_complete(toc_content, last_complete, model)
+    if if_complete == "yes" and finish_reason == "finished":
+        # print(f'toc_transformer response: {last_complete}')
+        last_complete = extract_json(last_complete)
+        
+        cleaned_response=convert_page_to_int(last_complete['table_of_contents'])
+        return cleaned_response
+    print('Done for the first part')
+    cnt = 1
+    last_complete = get_json_content(last_complete)
+    while not (if_complete == "yes" and finish_reason == "finished") and cnt < 20:
+        cnt += 1
+        # print(f'Working on the {cnt}th part')
+        # print(f'last_complete: {last_complete}, finish_reason: {finish_reason}, if_complete: {if_complete}, thinking: {_}')
+        position = last_complete.rfind('}')
+        if position != -1:
+            last_complete = last_complete[:position+2]
+        
+        prompt = {}
+        prompt['system_prompt'] = f"""
+        You are a JSON formatter. Your ONLY job is to output valid JSON.
+        Do not explain, do not comment, do not add any text outside the JSON.
+
+        Task:
+        You are given a raw table of contents and a incomplete transformed table of contents json structure.
+        Continue the table of contents json structure, directly output the remaining part of the json structure.
+        
+        REQUIRED JSON FORMAT:
+        {{
+        "table_of_contents": [
+            {{
+                "structure": <structure index, "x.x.x" or None> (string),
+                "title": <title of the section>,
+                "page": <page number or None>,
+            }},
+            ...
+            ],
+        }}"""
+
+        prompt['user_prompt'] = f"""
+        Raw table of contents: {toc_content}
+        
+        Incomplete transformed table of contents json structure: {last_complete}
+        
+        Please continue the json structure, directly output the remaining part of the json structure.
+        """
+ 
+        
+        new_complete, finish_reason = ChatGPT_API_with_finish_reason(model=model, prompt=prompt)
+        
+
+        if new_complete.startswith('```json'):
+            new_complete =  get_json_content(new_complete)
+            last_complete = last_complete+new_complete
+
+        if_complete,_ = check_if_toc_transformation_is_complete(toc_content, last_complete, model)
+        logger.info(f'toc_content: {toc_content}')
+        logger.info(f'toc_transformer new_complete: {new_complete}, if_complete: {if_complete}, thinking: {_}')
+    if cnt >= 20:
+        raise Exception('toc_transformer failed to complete')
+    last_complete = json.loads(last_complete)
+
+    cleaned_response=convert_page_to_int(last_complete['table_of_contents'])
+    return cleaned_response
+
+
+def toc_transformer_re(toc_content, logger=None):
     logger.info(f'toc_content: {toc_content}')
     response = []
 
@@ -577,6 +680,16 @@ def toc_transformer(toc_content, model=None, logger=None):
     logger.info(f'toc_transformer response: {response}')
     # if response:
     return response
+    
+    
+    
+
+def toc_transformer(toc_content, ai=False, model=None, logger=None):
+    logger.info(f'toc_content: {toc_content}')
+    if ai:
+        return toc_transformer_ai(toc_content, model=model, logger=logger)
+    else:
+        return toc_transformer_re(toc_content, logger=logger)
     
     
     
@@ -860,6 +973,34 @@ def generate_toc_init(part, model=None):
     else:
         raise Exception(f'finish reason: {finish_reason}')
 
+
+def generate_toc_ai(group_texts, model=None, logger=None):
+    toc_with_page_number= generate_toc_init(group_texts[0], model)
+    logger.info(f'generate_toc_init: {toc_with_page_number}')
+    for group_text in group_texts[1:]:
+        toc_with_page_number_additional = generate_toc_continue(toc_with_page_number, group_text, model)    
+        toc_with_page_number.extend(toc_with_page_number_additional)
+    return toc_with_page_number
+
+def generate_toc_re(group_texts, logger=None):
+    """
+    Build a table of contents from grouped page text using rule-based extraction
+    (``transform_text_to_json``). Output matches ``generate_toc_ai``: a list of
+    dicts with keys ``structure``, ``title``, ``physical_index`` (e.g.
+    ``<physical_index_3>`` as a string value).
+    """
+    if not group_texts:
+        return []
+    combined = "".join(group_texts)
+    toc_with_page_number = transform_text_to_json(combined)
+    
+    return toc_with_page_number
+
+def generate_toc(group_texts, ai_mode=True, model=None, logger=None):
+    if ai_mode:
+        return generate_toc_ai(group_texts, model, logger)
+    else:
+        return generate_toc_re(group_texts, logger)
 def process_no_toc(page_list, start_index=1, model=None, logger=None):
     page_contents=[]
     token_lengths=[]
@@ -870,11 +1011,10 @@ def process_no_toc(page_list, start_index=1, model=None, logger=None):
     group_texts = page_list_to_group_text(page_contents, token_lengths)
     logger.info(f'len(group_texts): {len(group_texts)}')
     logger.info(f'group_texts: {group_texts}')
-    toc_with_page_number= generate_toc_init(group_texts[0], model)
-    logger.info(f'generate_toc_init: {toc_with_page_number}')
-    for group_text in group_texts[1:]:
-        toc_with_page_number_additional = generate_toc_continue(toc_with_page_number, group_text, model)    
-        toc_with_page_number.extend(toc_with_page_number_additional)
+
+
+    print(f'generate toc ...')    
+    toc_with_page_number = generate_toc(group_texts, model=model, logger = logger)
     logger.info(f'generate_toc: {toc_with_page_number}')
 
     toc_with_page_number = convert_physical_index_to_int(toc_with_page_number)
@@ -909,7 +1049,7 @@ def process_toc_no_page_numbers(toc_content, toc_page_list, page_list,  start_in
 
 def process_toc_with_page_numbers(toc_content, toc_page_list, page_list, toc_check_page_num=None, model=None, logger=None):
     
-    toc_with_page_number = toc_transformer(toc_content, model, logger)
+    toc_with_page_number = toc_transformer(toc_content, model = model, logger = logger)
     logger.info(f'toc_with_page_number: {toc_with_page_number}')
 
     toc_no_page_number = remove_page_number(copy.deepcopy(toc_with_page_number))
@@ -1006,7 +1146,8 @@ def check_toc(page_list, opt=None,logger=None):
                 additional_toc_pages = find_toc_pages(
                     start_page_index=current_start_index,
                     page_list=page_list,
-                    opt=opt
+                    opt=opt,
+                    logger = logger
                 )
                 
                 if len(additional_toc_pages) == 0:
