@@ -10,7 +10,7 @@
 
 ## Overview
 
-> **Note**: This is a modified version of [PageIndex](https://github.com/VectifyAI/PageIndex) with enhanced Ollama support such that the code can run without API and improved error handling. The original PageIndex framework is developed by [VectifyAI](https://github.com/VectifyAI).
+> **Note**: This is a modified version of [PageIndex](https://github.com/VectifyAI/PageIndex) with enhanced local LLM support such that the code can run without API and improved error handling. The original PageIndex framework is developed by [VectifyAI](https://github.com/VectifyAI).
 
 PageIndex is a **reasoning-based**, **vectorless RAG** framework that performs retrieval through document structure analysis and LLM reasoning, rather than traditional vector similarity search. Unlike conventional RAG systems, PageIndex:
 
