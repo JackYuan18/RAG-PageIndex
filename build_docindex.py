@@ -55,6 +55,8 @@ if __name__ == "__main__":
     parser.add_argument('--output-dir', type=str, default='./results',
                       help='Output directory for structure files and DocIndex')
     
+    parser.add_argument('--pageindex-ai-mode', type=bool, default=False,
+                      help='PageIndex AI mode: True for LLM, False for rule')
     args = parser.parse_args()
     print(f'Using model: {args.model}')
     # Validate database directory
@@ -99,7 +101,16 @@ if __name__ == "__main__":
     pdf_failed = 0
     failed_doc = []
     for pdf_path in pdf_files:
-        success, doc_index = process_document(pdf_path, output_dir, opt)
+        # Default to rule-based PageIndex internals (PAGEINDEX_AI_MODE=0).
+        # If it fails, fall back to LLM mode (PAGEINDEX_AI_MODE=1) once.
+        success, doc_index, _step_timings, _total_seconds = process_document(
+            pdf_path, output_dir, opt, update_docindex=True, pageindex_ai_mode=args.pageindex_ai_mode
+        )
+        if not success and args.pageindex_ai_mode == False:
+            print("Rule-based mode failed; retrying with LLM mode...")
+            success, doc_index, _step_timings, _total_seconds = process_document(
+                pdf_path, output_dir, opt, update_docindex=True, pageindex_ai_mode=True
+            )
         if success:
             pdf_success += 1
         else:

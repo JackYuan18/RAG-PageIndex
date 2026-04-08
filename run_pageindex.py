@@ -3,7 +3,7 @@ import json
 import os
 import time
 from collections import defaultdict
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from pageindex import *
 from pageindex.page_index_md import md_to_tree
@@ -123,7 +123,21 @@ def merge_keywords(keywords, doc_index, model=None):
     return updated_keywords, updated_doc_index
 
 
-def process_document(pdf_path, output_dir, opt, update_docindex=True):
+def process_document(
+    pdf_path,
+    output_dir,
+    opt,
+    update_docindex=True,
+    pageindex_ai_mode: Optional[bool] = None,
+):
+    """
+    pageindex_ai_mode:
+      - True  => force LLM-based PageIndex internals (PAGEINDEX_AI_MODE=1)
+      - False => force rule-based PageIndex internals (PAGEINDEX_AI_MODE=0)
+      - None  => leave environment as-is (default behavior)
+    """
+    if pageindex_ai_mode is not None:
+        os.environ["PAGEINDEX_AI_MODE"] = "1" if pageindex_ai_mode else "0"
     step_timings: List[Dict[str, Any]] = []
     doc_index = defaultdict(set)
     t_process = time.perf_counter()
@@ -249,6 +263,12 @@ if __name__ == "__main__":
                       help='Token threshold for generating summaries (markdown only)')
     parser.add_argument('--timings-out', type=str, default=None,
                       help='Optional path to write JSON timings')
+    parser.add_argument(
+        "--pageindex-ai-mode",
+        choices=["llm", "rule", "auto"],
+        default="auto",
+        help="Control PAGEINDEX_AI_MODE for this run: llm=1, rule=0, auto=leave env unchanged",
+    )
     args = parser.parse_args()
     
     output_dir = './results'
@@ -282,7 +302,16 @@ if __name__ == "__main__":
             if_add_doc_abstract=args.if_add_doc_abstract,
             if_add_node_text=args.if_add_node_text
         )
-        success, doc_index, step_timings, total_seconds = process_document(args.pdf_path, output_dir, opt, args.update_docindex)
+        ai_mode: Optional[bool]
+        if args.pageindex_ai_mode == "llm":
+            ai_mode = True
+        elif args.pageindex_ai_mode == "rule":
+            ai_mode = False
+        else:
+            ai_mode = None
+        success, doc_index, step_timings, total_seconds = process_document(
+            args.pdf_path, output_dir, opt, args.update_docindex, pageindex_ai_mode=ai_mode
+        )
         # Process the PDF
         # toc_with_page_number = page_index_main(args.pdf_path, opt)
         print(f'Parsing done, saving to file... {success}')

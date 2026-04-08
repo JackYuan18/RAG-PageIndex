@@ -5,6 +5,7 @@ import math
 import random
 import re
 import time
+from difflib import SequenceMatcher
 from typing import Any, Dict, List, Optional
 from .utils import *
 from .transform_to_json import transform_text_to_json
@@ -12,8 +13,58 @@ import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
+def _env_flag(name: str, default: bool) -> bool:
+    v = os.getenv(name)
+    if v is None:
+        return default
+    s = str(v).strip().lower()
+    if s in {"1", "true", "yes", "y", "on"}:
+        return True
+    if s in {"0", "false", "no", "n", "off"}:
+        return False
+    return default
+
+
+def _use_llm(ai_mode: Optional[bool]) -> bool:
+    """
+    Central switch to enable rule-based alternatives.
+
+    - ai_mode=True  -> use LLM-based implementation
+    - ai_mode=False -> use rule-based implementation
+    - ai_mode=None  -> consult env var PAGEINDEX_AI_MODE (default: True)
+    """
+    if ai_mode is not None:
+        return bool(ai_mode)
+    return _env_flag("PAGEINDEX_AI_MODE", True)
+
+
+def _normalize_title_for_match(title: str) -> str:
+    t = (title or "").strip().upper()
+    t = re.sub(r"^\s*CHAPTER\s+\d+(?:\.\d+)*\s*\.?\s*", "", t, flags=re.IGNORECASE)
+    t = re.sub(r"^\s*APPENDIX\s+[A-Z]\s*\.?\s*", "", t, flags=re.IGNORECASE)
+    t = re.sub(r"[^A-Z0-9\s]+", " ", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
+
+def _page_blocks_from_tagged_text(tagged: str) -> List[Dict[str, Any]]:
+    """
+    Parse text with <physical_index_N> markers into page blocks.
+    Returns list of dicts: {"physical_index": int, "text": str}
+    """
+    parts = re.split(r"<physical_index_(\d+)>", tagged)
+    blocks: List[Dict[str, Any]] = []
+    for i in range(1, len(parts) - 1, 2):
+        try:
+            idx = int(parts[i])
+        except Exception:
+            continue
+        blocks.append({"physical_index": idx, "text": parts[i + 1] or ""})
+    return blocks
+
+
 ################### check title in page #########################################################
-async def check_title_appearance(item, page_list, start_index=1, model=None):    
+async def check_title_appearance_ai(item, page_list, start_index=1, model=None):    
     title=item['title']
     if 'physical_index' not in item or item['physical_index'] is None:
         return {'list_index': item.get('list_index'), 'answer': 'no', 'title':title, 'page_number': None}
@@ -72,7 +123,7 @@ async def check_title_appearance(item, page_list, start_index=1, model=None):
     return {'list_index': item['list_index'], 'answer': answer, 'title': title, 'page_number': page_number}
 
 
-async def check_title_appearance_in_start(title, page_text, model=None, logger=None):    
+async def check_title_appearance_in_start_ai(title, page_text, model=None, logger=None):    
     
     prompt = {}
     prompt['system_prompt'] = f"""
@@ -147,7 +198,56 @@ async def check_title_appearance_in_start_concurrent(structure, page_list, model
     return structure
 
 
-def toc_detector_single_page(content, model=None):
+def _title_appears_in_text_re(title: str, text: str, must_be_near_start: bool) -> bool:
+    target = _normalize_title_for_match(title)
+    if not target:
+        return False
+    hay = text or ""
+    if must_be_near_start:
+        hay = hay[: max(2500, int(0.25 * len(hay)))]
+    cand = _normalize_title_for_match(hay)
+    if not cand:
+        return False
+    if target in cand:
+        return True
+    return SequenceMatcher(None, target, cand).ratio() >= 0.78
+
+
+async def check_title_appearance(item, page_list, start_index=1, model=None, ai_mode: Optional[bool] = None):
+    """
+    Switchable title appearance checker used during TOC verification.
+    Returns same shape as the AI version: {list_index, answer, title, page_number}.
+    """
+    if _use_llm(ai_mode):
+        return await check_title_appearance_ai(item, page_list, start_index=start_index, model=model)
+
+    title = (item or {}).get('title') or ""
+    if 'physical_index' not in (item or {}) or item.get('physical_index') is None:
+        return {'list_index': item.get('list_index'), 'answer': 'no', 'title': title, 'page_number': None}
+    try:
+        page_number = int(item['physical_index'])
+    except Exception:
+        return {'list_index': item.get('list_index'), 'answer': 'no', 'title': title, 'page_number': None}
+    idx = page_number - start_index
+    if idx < 0 or idx >= len(page_list):
+        return {'list_index': item.get('list_index'), 'answer': 'no', 'title': title, 'page_number': page_number}
+    page_text = page_list[idx][0]
+    ok = _title_appears_in_text_re(title, page_text, must_be_near_start=False)
+    return {'list_index': item.get('list_index'), 'answer': 'yes' if ok else 'no', 'title': title, 'page_number': page_number}
+
+
+async def check_title_appearance_in_start(title, page_text, model=None, logger=None, ai_mode: Optional[bool] = None):
+    """
+    Switchable checker for whether title appears near start of page.
+    Returns "yes"/"no" like the AI version.
+    """
+    if _use_llm(ai_mode):
+        return await check_title_appearance_in_start_ai(title, page_text, model=model, logger=logger)
+    ok = _title_appears_in_text_re(title, page_text, must_be_near_start=True)
+    return 'yes' if ok else 'no'
+
+
+def toc_detector_single_page_ai(content, model=None):
     
     
     prompt = {}
@@ -200,6 +300,35 @@ def toc_detector_single_page(content, model=None):
     # print(f'toc_detector_single_page response: {response}')
     # print(f'toc_detector_single_page json_content: {json_content}')
     return json_content#['toc_detected']
+
+
+def toc_detector_single_page_re(content: str) -> Dict[str, Any]:
+    """
+    Rule-based TOC page detection using heading-density heuristics.
+    Returns the same shape as toc_detector_single_page_ai: {"thinking": str, "toc_detected": "yes"|"no"}.
+    """
+    lines = [l.strip() for l in (content or "").splitlines() if l.strip()]
+    if not lines:
+        return {"thinking": "Empty page", "toc_detected": "no"}
+
+    # Lines that look like TOC entries: title ... pageNumber (arabic or roman) near end.
+    toc_line = re.compile(r"^.{3,}(\.{2,}|\s{2,}|:\s*)\s*([ivxlcdm]+|\d{1,4})\s*$", re.IGNORECASE)
+    n_tocish = sum(1 for l in lines if toc_line.match(l))
+    has_keyword = bool(re.search(r"\btable\s+of\s+contents\b", content or "", flags=re.IGNORECASE))
+
+    density = n_tocish / max(1, len(lines))
+    if density >= 0.70 or (density >= 0.50 and has_keyword):
+        return {"thinking": f"High TOC-like line density ({density:.2f})", "toc_detected": "yes"}
+    return {"thinking": f"Low TOC-like line density ({density:.2f})", "toc_detected": "no"}
+
+
+def toc_detector_single_page(content, model=None, ai_mode: Optional[bool] = None):
+    """
+    Switchable TOC detector. Defaults to LLM unless PAGEINDEX_AI_MODE=0.
+    """
+    if _use_llm(ai_mode):
+        return toc_detector_single_page_ai(content, model=model)
+    return toc_detector_single_page_re(content)
 
 
 def check_if_toc_extraction_is_complete(content, toc, model=None):
@@ -313,7 +442,7 @@ def extract_toc_content(content, model=None):
     
     return response
 
-def detect_page_index(toc_content, model=None,logger=None):
+def detect_page_index_ai(toc_content, model=None, logger=None):
     print('start detect_page_index')
     
 
@@ -388,7 +517,67 @@ def detect_page_index(toc_content, model=None,logger=None):
     logger.info(f'toc_content: {toc_content}, detect_page_index response: {json_content}')
     return json_content['page_index_given_in_toc']
 
-def toc_extractor(page_list, toc_page_list, model,logger=None):
+
+def detect_page_index_re(toc_content: str) -> str:
+    """
+    Rule-based classifier: return "yes" if TOC text appears to contain page numbers.
+    Mirrors detect_page_index_ai return value.
+    """
+    lines = [l.strip() for l in (toc_content or "").splitlines() if l.strip()]
+    if not lines:
+        return "no"
+
+    # Accept either dot leaders, wide spacing, or colon before the number.
+    trailing_num = re.compile(r"^(.+?)(?:\.{2,}|\s{2,}|:\s*)\s*([ivxlcdm]+|\d{1,4})\s*$", re.IGNORECASE)
+    page_like = 0
+    nums: List[int] = []
+    for l in lines:
+        m = trailing_num.match(l)
+        if not m:
+            continue
+        left = m.group(1).strip()
+        right = m.group(2).strip()
+        # Skip if left side is basically just a section number.
+        if re.fullmatch(r"\d+(?:\.\d+)*", left):
+            continue
+        # Skip obvious standards/codes.
+        if re.search(r"\bISO\b|\bIEEE\b|\bSAE\b|J\d{3,}", left, flags=re.IGNORECASE):
+            continue
+        page_like += 1
+        if right.isdigit():
+            try:
+                nums.append(int(right))
+            except Exception:
+                pass
+
+    if page_like == 0:
+        return "no"
+
+    ratio = page_like / max(1, len(lines))
+    # If we have enough lines with trailing numbers, likely yes.
+    if ratio >= 0.55:
+        return "yes"
+
+    # Weak signal: if few lines, check for near-sequential small ints.
+    nums = [n for n in nums if 0 < n <= 2000]
+    if len(nums) >= 5:
+        diffs = [b - a for a, b in zip(nums, nums[1:]) if b >= a]
+        small_steps = sum(1 for d in diffs if 0 <= d <= 5)
+        if small_steps / max(1, len(diffs)) >= 0.60:
+            return "yes"
+
+    return "no"
+
+
+def detect_page_index(toc_content, model=None, logger=None, ai_mode: Optional[bool] = None):
+    """
+    Switchable page-index detector. Defaults to LLM unless PAGEINDEX_AI_MODE=0.
+    """
+    if _use_llm(ai_mode):
+        return detect_page_index_ai(toc_content, model=model, logger=logger)
+    return detect_page_index_re(toc_content)
+
+def toc_extractor(page_list, toc_page_list, model, logger=None, ai_mode: Optional[bool] = None):
     def transform_dots_to_colon(text):       # change dots to colon for better readability
         text = re.sub(r'\.{5,}', ': ', text)
         # Handle dots separated by spaces
@@ -399,7 +588,7 @@ def toc_extractor(page_list, toc_page_list, model,logger=None):
     for page_index in toc_page_list:
         toc_content += page_list[page_index][0]
     toc_content = transform_dots_to_colon(toc_content)
-    has_page_index = detect_page_index(toc_content, model=model,logger=logger)
+    has_page_index = detect_page_index(toc_content, model=model, logger=logger, ai_mode=ai_mode)
     
     return {
         "toc_content": toc_content,
@@ -409,7 +598,7 @@ def toc_extractor(page_list, toc_page_list, model,logger=None):
 
 
 
-def toc_index_extractor(toc, content, model=None):
+def toc_index_extractor_ai(toc, content, model=None):
     print('start toc_index_extractor')
     prompt = {}
     prompt['system_prompt'] = f"""
@@ -459,6 +648,64 @@ def toc_index_extractor(toc, content, model=None):
     response = ChatGPT_API(model=model, prompt=prompt)
     json_content = extract_json(response)    
     return json_content
+
+
+def _best_page_for_title(tagged_pages: str, title: str) -> Optional[int]:
+    blocks = _page_blocks_from_tagged_text(tagged_pages)
+    if not blocks:
+        return None
+    target = _normalize_title_for_match(title)
+    if not target:
+        return None
+
+    best_idx: Optional[int] = None
+    best_score = 0.0
+    for b in blocks:
+        txt = b["text"] or ""
+        head = txt[: max(2000, int(0.20 * len(txt)))]  # top ~20% or 2k chars
+        cand = _normalize_title_for_match(head)
+        if not cand:
+            continue
+        # Prefer exact/substring match, fallback to similarity.
+        if target in cand:
+            score = 1.0
+        else:
+            score = SequenceMatcher(None, target, cand).ratio()
+        if score > best_score:
+            best_score = score
+            best_idx = int(b["physical_index"])
+
+    if best_score >= 0.72:
+        return best_idx
+    return None
+
+
+def toc_index_extractor_re(toc: List[Dict[str, Any]], content: str) -> List[Dict[str, Any]]:
+    """
+    Rule-based mapping of TOC items to physical indices by searching titles near top-of-page.
+    Output mirrors toc_index_extractor_ai: list of items; include physical_index when found.
+    """
+    out: List[Dict[str, Any]] = []
+    for item in toc or []:
+        if not isinstance(item, dict):
+            continue
+        title = item.get("title") or ""
+        structure = item.get("structure")
+        mapped = _best_page_for_title(content, title)
+        new_item = {"structure": structure, "title": title}
+        if mapped is not None:
+            new_item["physical_index"] = f"<physical_index_{mapped}>"
+        out.append(new_item)
+    return out
+
+
+def toc_index_extractor(toc, content, model=None, ai_mode: Optional[bool] = None):
+    """
+    Switchable TOC->page mapper. Defaults to LLM unless PAGEINDEX_AI_MODE=0.
+    """
+    if _use_llm(ai_mode):
+        return toc_index_extractor_ai(toc, content, model=model)
+    return toc_index_extractor_re(toc, content)
 
 def extract_toc_hierarchy(text):
     entries = []
@@ -684,12 +931,24 @@ def toc_transformer_re(toc_content, logger=None):
     
     
 
-def toc_transformer(toc_content, ai=False, model=None, logger=None):
-    logger.info(f'toc_content: {toc_content}')
+def toc_transformer(toc_content, ai=False, model=None, logger=None, ai_mode: Optional[bool] = None):
+    """
+    Switchable TOC transformer.
+
+    Backward compatible:
+    - Existing callers can keep using ``ai=...``.
+    - New callers can pass ``ai_mode`` (True/False/None) like generate_toc.
+    """
+    # Prefer ai_mode/env-based switching; keep ``ai`` as legacy fallback only if ai_mode/env isn't used.
+    if ai_mode is None:
+        ai = _use_llm(None)
+    else:
+        ai = _use_llm(ai_mode)
+    if logger:
+        logger.info(f'toc_content: {toc_content}')
     if ai:
         return toc_transformer_ai(toc_content, model=model, logger=logger)
-    else:
-        return toc_transformer_re(toc_content, logger=logger)
+    return toc_transformer_re(toc_content, logger=logger)
     
     
     
@@ -821,7 +1080,7 @@ def page_list_to_group_text(page_contents, token_lengths, max_tokens=20000, over
     print('divide page_list to groups', len(subsets))
     return subsets
 
-def add_page_number_to_toc(part, structure, model=None):
+def add_page_number_to_toc_ai(part, structure, model=None):
     prompt = {}
     prompt['system_prompt'] = f"""
     You are a JSON formatter. Your ONLY job is to output valid JSON.
@@ -875,6 +1134,41 @@ def add_page_number_to_toc(part, structure, model=None):
         if 'start' in item:
             del item['start']
     return json_result
+
+
+def add_page_number_to_toc_re(part, structure: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Rule-based version of add_page_number_to_toc: fill physical_index for items whose title starts in this part.
+    Keeps all fields as-is; only sets/overwrites physical_index when a confident match is found in ``part``.
+    """
+    if isinstance(part, list):
+        part_text = "".join(str(x) for x in part)
+    else:
+        part_text = str(part or "")
+
+    out: List[Dict[str, Any]] = []
+    for item in structure or []:
+        if not isinstance(item, dict):
+            continue
+        new_item = dict(item)
+        title = new_item.get("title") or ""
+        mapped = _best_page_for_title(part_text, title)
+        if mapped is not None:
+            new_item["physical_index"] = f"<physical_index_{mapped}>"
+        else:
+            # Ensure key exists if upstream expects it; keep None if not found
+            new_item.setdefault("physical_index", None)
+        out.append(new_item)
+    return out
+
+
+def add_page_number_to_toc(part, structure, model=None, ai_mode: Optional[bool] = None):
+    """
+    Switchable page-number adder. Defaults to LLM unless PAGEINDEX_AI_MODE=0.
+    """
+    if _use_llm(ai_mode):
+        return add_page_number_to_toc_ai(part, structure, model=model)
+    return add_page_number_to_toc_re(part, structure)
 
 
 def remove_first_physical_index_section(text):
@@ -996,12 +1290,17 @@ def generate_toc_re(group_texts, logger=None):
     
     return toc_with_page_number
 
-def generate_toc(group_texts, ai_mode=False, model=None, logger=None):
-    if ai_mode:
+def generate_toc(group_texts, ai_mode: Optional[bool] = None, model=None, logger=None):
+    """
+    Switchable TOC generator.
+    - ai_mode=True  -> LLM-based (generate_toc_ai)
+    - ai_mode=False -> rule-based (generate_toc_re)
+    - ai_mode=None  -> consult env var PAGEINDEX_AI_MODE (default: True)
+    """
+    if _use_llm(ai_mode):
         return generate_toc_ai(group_texts, model, logger)
-    else:
-        return generate_toc_re(group_texts, logger)
-        
+    return generate_toc_re(group_texts, logger)
+
 def process_no_toc(page_list, start_index=1, model=None, logger=None):
     page_contents=[]
     token_lengths=[]
@@ -1026,7 +1325,7 @@ def process_no_toc(page_list, start_index=1, model=None, logger=None):
 def process_toc_no_page_numbers(toc_content, toc_page_list, page_list,  start_index=1, model=None, logger=None):
     page_contents=[]
     token_lengths=[]
-    toc_content = toc_transformer(toc_content, model, logger)
+    toc_content = toc_transformer(toc_content, model=model, logger=logger)
     logger.info(f'toc_transformer: {toc_content}')
     for page_index in range(start_index, start_index+len(page_list)):
         page_text = f"<physical_index_{page_index}>\n{page_list[page_index-start_index][0]}\n<physical_index_{page_index}>\n\n"
@@ -1050,7 +1349,7 @@ def process_toc_no_page_numbers(toc_content, toc_page_list, page_list,  start_in
 
 def process_toc_with_page_numbers(toc_content, toc_page_list, page_list, toc_check_page_num=None, model=None, logger=None):
     
-    toc_with_page_number = toc_transformer(toc_content, model = model, logger = logger)
+    toc_with_page_number = toc_transformer(toc_content, model=model, logger=logger)
     logger.info(f'toc_with_page_number: {toc_with_page_number}')
 
     toc_no_page_number = remove_page_number(copy.deepcopy(toc_with_page_number))
@@ -1122,8 +1421,6 @@ def process_none_page_numbers(toc_items, page_list, start_index=1, model=None):
     return toc_items
 
 
-
-
 def check_toc(page_list, opt=None,logger=None):
     toc_page_list = find_toc_pages(start_page_index=0, page_list=page_list, opt=opt, logger=logger)
     if len(toc_page_list) == 0:
@@ -1170,7 +1467,7 @@ def check_toc(page_list, opt=None,logger=None):
 
 
 ################### fix incorrect toc #########################################################
-def single_toc_item_index_fixer(section_title, content, model="gpt-4o-2024-11-20"):
+def single_toc_item_index_fixer_ai(section_title, content, model="gpt-4o-2024-11-20"):
     prompt = {}
     prompt['system_prompt'] = f"""
     You are a JSON formatter. Your ONLY job is to output valid JSON.
@@ -1196,6 +1493,23 @@ def single_toc_item_index_fixer(section_title, content, model="gpt-4o-2024-11-20
     
     json_content = extract_json(response)    
     return convert_physical_index_to_int(json_content['physical_index'])
+
+
+def single_toc_item_index_fixer_re(section_title: str, content: str) -> Optional[int]:
+    """
+    Rule-based version: returns the int physical_index if found, else None.
+    """
+    return _best_page_for_title(content, section_title)
+
+
+def single_toc_item_index_fixer(section_title, content, model="gpt-4o-2024-11-20", ai_mode: Optional[bool] = None):
+    """
+    Switchable fixer. Defaults to LLM unless PAGEINDEX_AI_MODE=0.
+    Returns int physical_index or None.
+    """
+    if _use_llm(ai_mode):
+        return single_toc_item_index_fixer_ai(section_title, content, model=model)
+    return single_toc_item_index_fixer_re(section_title, content)
 
 
 

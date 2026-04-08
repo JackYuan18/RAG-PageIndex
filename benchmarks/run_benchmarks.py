@@ -49,6 +49,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default="qwen")
     ap.add_argument("--out-dir", default=os.path.join(PROJECT_ROOT, "benchmarks", "runs"))
+    ap.add_argument("--ragas-dataset", default=None, help="Optional JSONL dataset path for RAGAS eval (see eval/README.md)")
+    ap.add_argument("--ragas-judge-model", default="gpt-5.1", help="OpenAI model name for RAGAS judging LLM")
     ap.add_argument(
         "--pdf",
         action="append",
@@ -112,6 +114,27 @@ def main():
         json.dump(results, f, indent=2, ensure_ascii=False)
     print(f"Benchmark artifacts saved to: {run_dir}")
     print(run_dir)
+
+    if args.ragas_dataset:
+        print("")
+        print("Running RAGAS evaluation...")
+        cmd = [
+            "python3",
+            "eval/ragas_eval.py",
+            "--dataset",
+            args.ragas_dataset,
+            "--results-dir",
+            os.path.join(PROJECT_ROOT, "results"),
+            "--model",
+            args.model,
+            "--judge-model",
+            args.ragas_judge_model,
+            "--out-dir",
+            os.path.join(run_dir, "ragas"),
+        ]
+        rc, wall = run_subprocess(cmd)
+        status = "OK" if rc == 0 else f"FAIL({rc})"
+        print(f"RAGAS evaluation: {status} in {wall:.2f}s")
 
 
 if __name__ == "__main__":
