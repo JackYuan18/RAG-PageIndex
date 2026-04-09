@@ -127,8 +127,7 @@ def process_document(
     pdf_path,
     output_dir,
     opt,
-    update_docindex=True,
-    pageindex_ai_mode: Optional[bool] = None,
+    update_docindex=True
 ):
     """
     pageindex_ai_mode:
@@ -136,6 +135,7 @@ def process_document(
       - False => force rule-based PageIndex internals (PAGEINDEX_AI_MODE=0)
       - None  => leave environment as-is (default behavior)
     """
+    pageindex_ai_mode = opt.ai_mode
     if pageindex_ai_mode is not None:
         os.environ["PAGEINDEX_AI_MODE"] = "1" if pageindex_ai_mode else "0"
     step_timings: List[Dict[str, Any]] = []
@@ -153,12 +153,11 @@ def process_document(
         output_file = f"{output_dir}/{pdf_name}_structure.json"
         os.makedirs(output_dir, exist_ok=True)
 
-        print("Step 11: Saving structure JSON...")
-        t0 = time.perf_counter()
+        print("Saving structure JSON...")
         with open(output_file, "w", encoding="utf-8") as f:
             json.dump(toc_with_page_number, f, indent=2)
         print(f"Tree structure saved to: {output_file}")
-        _finish_step(step_timings, "Step 11: Saving structure JSON", t0)
+
 
         if update_docindex:
             doc_index_path = os.path.join(output_dir, "DocIndex.json")
@@ -225,8 +224,8 @@ def process_document(
 if __name__ == "__main__":
     # Set up argument parser
     parser = argparse.ArgumentParser(description='Process PDF or Markdown document and generate structure')
-    parser.add_argument('--pdf_path', type=str, default = '/home/zyuan/NSTSCE_Bot/NSTSCE/Database/Communication-aware_Distributed_Gaussian_Process_Regression_Algorithms_for_Real-time_Machine_Learning.pdf', help='Path to the PDF file')
-    # parser.add_argument('--pdf_path', type=str, default = '/home/zyuan/NSTSCE_Bot/PageIndex/Database/Communication-aware_Distributed_Gaussian_Process_Regression_Algorithms_for_Real-time_Machine_Learning.pdf', help='Path to the PDF file')
+    # parser.add_argument('--pdf_path', type=str, default = '/home/zyuan/NSTSCE_Bot/NSTSCE/Database/Communication-aware_Distributed_Gaussian_Process_Regression_Algorithms_for_Real-time_Machine_Learning.pdf', help='Path to the PDF file')
+    parser.add_argument('--pdf_path', type=str, default = '/home/zyuan/NSTSCE_Bot/PageIndex/Database/Data-Driven_Characterization_of_Motorcycle_Riders_Kinematics_and_Crash_Risk_Final.pdf', help='Path to the PDF file')
     parser.add_argument('--md_path', type=str, help='Path to the Markdown file')
 
     # parser.add_argument('--model', type=str, default='gpt-5.1', help='Model to use')
@@ -265,9 +264,33 @@ if __name__ == "__main__":
                       help='Optional path to write JSON timings')
     parser.add_argument(
         "--pageindex-ai-mode",
+        dest="pageindex_ai_mode",
         choices=["llm", "rule", "auto"],
-        default="auto",
+        type=int,
+        default=0,
         help="Control PAGEINDEX_AI_MODE for this run: llm=1, rule=0, auto=leave env unchanged",
+    )
+    parser.add_argument(
+        "--node-summary-method",
+        "--summary-method",
+        dest="summary_method",
+        choices=["llm", "mmr"],
+        default='mmr',
+        help="Leaf node summarization backend (opt.summary_method); omit to use config / env",
+    )
+    parser.add_argument(
+        "--parent-summary-method",
+        dest="parent_summary_method",
+        choices=["llm", "mmr"],
+        default='mmr',
+        help="Parent node summarization backend (opt.parent_summary_method); omit to use config / env",
+    )
+    parser.add_argument(
+        "--abstract-method",
+        dest="abstract_method",
+        choices=["llm", "mmr"],
+        default='mmr',
+        help="Document abstract backend (opt.abstract_method); omit to use config / env",
     )
     args = parser.parse_args()
     
@@ -300,17 +323,16 @@ if __name__ == "__main__":
             if_add_parent_node_summary=args.if_add_parent_node_summary,
             if_add_doc_description=args.if_add_doc_description,
             if_add_doc_abstract=args.if_add_doc_abstract,
-            if_add_node_text=args.if_add_node_text
+            if_add_node_text=args.if_add_node_text,
+            summary_method= args.summary_method,
+            parent_summary_method= args.parent_summary_method,
+            abstract_method= args.abstract_method,
+            ai_mode= args.pageindex_ai_mode
         )
-        ai_mode: Optional[bool]
-        if args.pageindex_ai_mode == "llm":
-            ai_mode = True
-        elif args.pageindex_ai_mode == "rule":
-            ai_mode = False
-        else:
-            ai_mode = None
+     
+        
         success, doc_index, step_timings, total_seconds = process_document(
-            args.pdf_path, output_dir, opt, args.update_docindex, pageindex_ai_mode=ai_mode
+            args.pdf_path, output_dir, opt, args.update_docindex
         )
         # Process the PDF
         # toc_with_page_number = page_index_main(args.pdf_path, opt)

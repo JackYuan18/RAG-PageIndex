@@ -25,3 +25,4 @@ results (copy)/
 benchmarks/runs/
 benchmarks/runs_llm/
 benchmarks/runs_rule/
+cache/

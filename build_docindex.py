@@ -57,6 +57,28 @@ if __name__ == "__main__":
     
     parser.add_argument('--pageindex-ai-mode', type=bool, default=False,
                       help='PageIndex AI mode: True for LLM, False for rule')
+    parser.add_argument(
+        '--node-summary-method',
+        '--summary-method',
+        dest='summary_method',
+        choices=['llm', 'mmr'],
+        default=None,
+        help='Leaf node summarization backend (opt.summary_method); omit to use config / env',
+    )
+    parser.add_argument(
+        '--parent-summary-method',
+        dest='parent_summary_method',
+        choices=['llm', 'mmr'],
+        default=None,
+        help='Parent node summarization backend (opt.parent_summary_method); omit to use config / env',
+    )
+    parser.add_argument(
+        '--abstract-method',
+        dest='abstract_method',
+        choices=['llm', 'mmr'],
+        default=None,
+        help='Document abstract backend (opt.abstract_method); omit to use config / env',
+    )
     args = parser.parse_args()
     print(f'Using model: {args.model}')
     # Validate database directory
@@ -93,7 +115,11 @@ if __name__ == "__main__":
         if_add_parent_node_summary=args.if_add_parent_node_summary,
         if_add_doc_description=args.if_add_doc_description,
         if_add_doc_abstract=args.if_add_doc_abstract,
-        if_add_node_text=args.if_add_node_text
+        if_add_node_text=args.if_add_node_text,
+        summary_method=args.summary_method,
+        parent_summary_method=args.parent_summary_method,
+        abstract_method=args.abstract_method,
+        ai_mode=args.pageindex_ai_mode
     )
     
     # Process all PDF files

@@ -2,6 +2,7 @@ import tiktoken
 import openai
 import logging
 import os
+import hashlib
 from datetime import datetime
 import time
 import json
@@ -17,6 +18,7 @@ import yaml
 from pathlib import Path
 from types import SimpleNamespace as config
 import re
+from difflib import SequenceMatcher
 CHATGPT_API_KEY = os.getenv("CHATGPT_API_KEY")
 HF_TOKEN = os.getenv("HF_TOKEN")
 # API Provider: "ollama", "openai", "huggingface", or None (auto-detect)
@@ -26,6 +28,142 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")  # Default model for Oll
 # OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:70b")
 QWEN_MODEL = os.getenv("QWEN_MODEL", "qwen2.5:14b")
 
+# Defaults for Ollama embedding chunking (overridden by env PAGEINDEX_EMBED_* when set).
+PAGEINDEX_EMBED_MAX_CHARS = 512
+PAGEINDEX_EMBED_BATCH = 16
+def _env_str(name: str, default: str | None = None) -> str | None:
+    v = os.getenv(name)
+    if v is None:
+        return default
+    s = str(v).strip()
+    return s if s != "" else default
+
+def _normalize_choice(value: str | None, allowed: set[str], default: str) -> str:
+    if not value:
+        return default
+    v = str(value).strip().lower()
+    return v if v in allowed else default
+
+def get_summary_method(opt=None) -> str:
+    """
+    Leaf-node summarization backend: read opt.summary_method (set via config, CLI, or ConfigLoader env merge).
+    """
+    if opt is None:
+        return "llm"
+    return _normalize_choice(getattr(opt, "summary_method", None), {"llm", "mmr"}, "llm")
+
+def get_parent_summary_method(opt=None) -> str:
+    """Parent-node summarization backend: read opt.parent_summary_method."""
+    if opt is None:
+        return "llm"
+    return _normalize_choice(getattr(opt, "parent_summary_method", None), {"llm", "mmr"}, "llm")
+
+
+def get_abstract_method(opt=None) -> str:
+    """Document abstract backend: read opt.abstract_method."""
+    if opt is None:
+        return "llm"
+    return _normalize_choice(getattr(opt, "abstract_method", None), {"llm", "mmr"}, "llm")
+
+
+def _apply_method_env_overrides_to_merged(
+    merged: dict, explicit_user_keys: set
+) -> dict:
+    """
+    After merging defaults + user dict, apply PAGEINDEX_* env vars only for keys the user
+    did not set explicitly (CLI / programmatic user_dict).
+    """
+    out = dict(merged)
+    if "summary_method" not in explicit_user_keys:
+        v = _env_str("PAGEINDEX_NODE_SUMMARY_METHOD") or _env_str("PAGEINDEX_SUMMARY_METHOD")
+        if v:
+            out["summary_method"] = v
+    if "parent_summary_method" not in explicit_user_keys:
+        v = _env_str("PAGEINDEX_PARENT_SUMMARY_METHOD")
+        if v:
+            out["parent_summary_method"] = v
+    if "abstract_method" not in explicit_user_keys:
+        v = _env_str("PAGEINDEX_ABSTRACT_METHOD")
+        if v:
+            out["abstract_method"] = v
+    return out
+
+
+def _mmr_merge_near_duplicates_enabled(opt) -> bool:
+    """Whether to merge near-duplicate snippet strings before MMR (string similarity, not embeddings)."""
+    env = _env_str("PAGEINDEX_MMR_NEAR_DUP_MERGE")
+    if env is not None:
+        return str(env).lower() in ("1", "true", "yes", "y", "on")
+    if opt is None:
+        return True
+    v = getattr(opt, "mmr_near_dup_merge", "yes")
+    return str(v).lower() in ("yes", "true", "1", "y", "on")
+
+
+def _mmr_near_dup_ratio_value(opt) -> float:
+    """SequenceMatcher ratio threshold in [0.5, 1.0]; higher = stricter (fewer merges)."""
+    env = _env_str("PAGEINDEX_MMR_NEAR_DUP_RATIO")
+    if env is not None:
+        try:
+            r = float(env)
+        except ValueError:
+            r = 0.92
+    else:
+        try:
+            r = float(getattr(opt, "mmr_near_dup_ratio", 0.92) or 0.92)
+        except (TypeError, ValueError):
+            r = 0.92
+    return max(0.5, min(1.0, r))
+
+
+def merge_near_duplicate_strings(strings: list[str], opt=None) -> list[str]:
+    """
+    Drop near-duplicate strings using difflib similarity (longest-first as canonical).
+    Exact duplicates are already removed earlier; this catches minor wording/spacing variants.
+    """
+    if not strings or not _mmr_merge_near_duplicates_enabled(opt):
+        return strings
+    ratio = _mmr_near_dup_ratio_value(opt)
+    sorted_s = sorted(
+        [str(s).strip() for s in strings if s and str(s).strip()],
+        key=lambda x: len(x),
+        reverse=True,
+    )
+    kept: list[str] = []
+    for s in sorted_s:
+        dup = False
+        for k in kept:
+            if SequenceMatcher(None, s, k).ratio() >= ratio:
+                dup = True
+                break
+        if not dup:
+            kept.append(s)
+    return kept
+
+
+def merge_near_duplicate_candidates(candidates: list[dict], opt=None) -> list[dict]:
+    """Same as merge_near_duplicate_strings but preserves dict metadata for the kept canonical row."""
+    if not candidates:
+        return candidates
+    ratio = _mmr_near_dup_ratio_value(opt)
+    items = [
+        c
+        for c in candidates
+        if isinstance(c, dict) and str(c.get("snippet", "")).strip()
+    ]
+    items.sort(key=lambda c: len(str(c.get("snippet", ""))), reverse=True)
+    kept: list[dict] = []
+    for cand in items:
+        s = str(cand.get("snippet", "")).strip()
+        dup = False
+        for k in kept:
+            ks = str(k.get("snippet", "")).strip()
+            if SequenceMatcher(None, s, ks).ratio() >= ratio:
+                dup = True
+                break
+        if not dup:
+            kept.append(cand)
+    return kept
 
 
 def get_openai_client(model):
@@ -69,6 +207,403 @@ def get_async_openai_client(model):
         )
     else:  # Default to OpenAI
         return openai.AsyncOpenAI(api_key= CHATGPT_API_KEY)
+
+def _embedding_cache_dir(embed_model: str) -> str:
+    safe = re.sub(r"[^a-zA-Z0-9._-]+", "_", embed_model or "unknown")
+    return os.path.join("cache", "embeddings", safe)
+
+def _sha256_text(s: str) -> str:
+    return hashlib.sha256((s or "").encode("utf-8", errors="ignore")).hexdigest()
+
+def _load_cached_embedding(embed_model: str, text: str) -> list[float] | None:
+    try:
+        d = _embedding_cache_dir(embed_model)
+        h = _sha256_text(text)
+        path = os.path.join(d, f"{h}.json")
+        if not os.path.exists(path):
+            return None
+        with open(path, "r", encoding="utf-8") as f:
+            obj = json.load(f)
+        if isinstance(obj, dict) and obj.get("model") == embed_model and isinstance(obj.get("embedding"), list):
+            return obj["embedding"]
+    except Exception:
+        return None
+    return None
+
+def _save_cached_embedding(embed_model: str, text: str, embedding: list[float]) -> None:
+    try:
+        d = _embedding_cache_dir(embed_model)
+        os.makedirs(d, exist_ok=True)
+        h = _sha256_text(text)
+        path = os.path.join(d, f"{h}.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"model": embed_model, "embedding": embedding}, f)
+    except Exception:
+        return
+
+
+def _embed_max_chars() -> int:
+    """Max characters per embedding request chunk (mxbai-embed-large token limit is enforced by Ollama)."""
+    raw = os.getenv("PAGEINDEX_EMBED_MAX_CHARS")
+    if raw is None or str(raw).strip() == "":
+        try:
+            v = int(PAGEINDEX_EMBED_MAX_CHARS)
+        except (TypeError, ValueError):
+            v = 512
+    else:
+        try:
+            v = int(raw)
+        except ValueError:
+            v = int(PAGEINDEX_EMBED_MAX_CHARS) if isinstance(PAGEINDEX_EMBED_MAX_CHARS, int) else 512
+    return max(128, v)
+
+
+def _split_text_for_embedding(s: str, max_chars: int) -> list[str]:
+    """Split long text into chunks that fit embedding context; prefer breaking at whitespace."""
+    s = (s or "").strip()
+    if not s:
+        return []
+    if max_chars <= 0:
+        return [s]
+    if len(s) <= max_chars:
+        return [s]
+    chunks: list[str] = []
+    i = 0
+    while i < len(s):
+        end = min(i + max_chars, len(s))
+        if end < len(s):
+            window = s[i:end]
+            sp = window.rfind(" ")
+            if sp > max_chars // 4:
+                end = i + sp
+        piece = s[i:end].strip()
+        if piece:
+            chunks.append(piece)
+        i = end
+        while i < len(s) and s[i].isspace():
+            i += 1
+    return chunks if chunks else [s[:max_chars]]
+
+
+def _embed_parts_ollama(
+    client,
+    embed_model: str,
+    parts: list[str],
+) -> list[list[float]]:
+    """Embed a list of short strings in small batches; each part must already be under max length."""
+    if not parts:
+        return []
+    out: list[list[float]] = []
+    raw_b = os.getenv("PAGEINDEX_EMBED_BATCH")
+    if raw_b is None or str(raw_b).strip() == "":
+        try:
+            batch_size = max(1, int(PAGEINDEX_EMBED_BATCH))
+        except (TypeError, ValueError):
+            batch_size = 16
+    else:
+        try:
+            batch_size = max(1, int(raw_b))
+        except ValueError:
+            batch_size = max(1, int(PAGEINDEX_EMBED_BATCH)) if isinstance(PAGEINDEX_EMBED_BATCH, int) else 16
+    max_retries = 6
+    for start in range(0, len(parts), batch_size):
+        batch = parts[start : start + batch_size]
+        last_err: Exception | None = None
+        for attempt in range(max_retries):
+            try:
+                resp = client.embeddings.create(model=embed_model, input=batch)
+                data = getattr(resp, "data", None) or []
+                row = []
+                for item in data:
+                    row.append(getattr(item, "embedding", None) or item.get("embedding"))
+                if len(row) != len(batch):
+                    raise RuntimeError(
+                        f"Embedding count mismatch: got {len(row)} expected {len(batch)}"
+                    )
+                out.extend(row)
+                break
+            except Exception as e:
+                last_err = e
+                time.sleep(min(2.0, 0.25 * (attempt + 1)))
+        else:
+            raise last_err  # type: ignore[misc]
+    return out
+
+
+def _embed_one_string_ollama(client, embed_model: str, text: str) -> list[float]:
+    """
+    One logical string -> one embedding vector. Long strings are split, embedded, mean-pooled.
+    Sub-chunks are cached; full string is cached as the pooled vector.
+    """
+    text = "" if text is None else str(text)
+    if not text.strip():
+        return []
+
+    cached = _load_cached_embedding(embed_model, text)
+    if cached is not None:
+        return cached
+
+    max_c = _embed_max_chars()
+    parts = _split_text_for_embedding(text, max_c)
+    need_fetch: list[str] = []
+    for p in parts:
+        if _load_cached_embedding(embed_model, p) is None:
+            need_fetch.append(p)
+
+    if need_fetch:
+        fresh = _embed_parts_ollama(client, embed_model, need_fetch)
+        for p, emb in zip(need_fetch, fresh):
+            _save_cached_embedding(embed_model, p, emb)
+
+    part_embs: list[list[float]] = []
+    for p in parts:
+        ce = _load_cached_embedding(embed_model, p)
+        if ce:
+            part_embs.append(ce)
+
+    pooled = _mean_embedding(part_embs)
+    if pooled:
+        _save_cached_embedding(embed_model, text, pooled)
+    return pooled
+
+
+def embed_texts_ollama(texts: list[str], embed_model: str) -> list[list[float]]:
+    """
+    Embed a list of texts using Ollama's OpenAI-compatible /v1/embeddings endpoint.
+    Uses a local on-disk cache keyed by sha256(text).
+    Long inputs are split, embedded, and mean-pooled so Ollama's context limit is not exceeded.
+    """
+    embed_model = str(embed_model or "").strip() or "mxbai-embed-large"
+    texts = ["" if t is None else str(t) for t in (texts or [])]
+    if not texts:
+        return []
+
+    cached: list[list[float] | None] = []
+    to_fetch: list[str] = []
+    fetch_idx: list[int] = []
+    for i, t in enumerate(texts):
+        emb = _load_cached_embedding(embed_model, t)
+        cached.append(emb)
+        if emb is None:
+            to_fetch.append(t)
+            fetch_idx.append(i)
+
+    if to_fetch:
+        client = get_openai_client("ollama")
+        for j, t in enumerate(to_fetch):
+            emb = _embed_one_string_ollama(client, embed_model, t)
+            idx = fetch_idx[j]
+            cached[idx] = emb
+
+    # At this point, everything should be filled
+    return [c or [] for c in cached]
+
+
+def _sentence_split(text: str) -> list[str]:
+    """
+    Cheap sentence splitter (no external deps). Good enough for extractive snippets.
+    """
+    t = re.sub(r"\s+", " ", (text or "").strip())
+    if not t:
+        return []
+    # Split on sentence-ending punctuation followed by space and a capital/number/quote/paren.
+    parts = re.split(r"(?<=[\.\!\?])\s+(?=[A-Z0-9\"'\(\[])", t)
+    return [p.strip() for p in parts if p and p.strip()]
+
+
+def chunk_text_to_snippets(
+    text: str,
+    *,
+    max_tokens: int,
+    sentence_overlap: int,
+    model=None,
+) -> list[str]:
+    """
+    Group sentences into snippets up to ~max_tokens with N-sentence overlap.
+    """
+    max_tokens = int(max_tokens or 0)
+    if max_tokens <= 0:
+        max_tokens = 220
+    sentence_overlap = max(0, int(sentence_overlap or 0))
+
+    sents = _sentence_split(text)
+    if not sents:
+        return []
+
+    snippets: list[str] = []
+    i = 0
+    while i < len(sents):
+        j = i
+        cur: list[str] = []
+        while j < len(sents):
+            cand = " ".join(cur + [sents[j]]).strip()
+            if not cand:
+                j += 1
+                continue
+            if count_tokens(cand, model=model) > max_tokens and cur:
+                break
+            cur.append(sents[j])
+            j += 1
+            # If single sentence is too long, allow it alone.
+            if len(cur) == 1 and count_tokens(cur[0], model=model) > max_tokens:
+                break
+
+        snippet = " ".join(cur).strip()
+        if snippet:
+            snippets.append(snippet)
+
+        if j <= i:
+            i += 1
+        else:
+            i = max(i + 1, j - sentence_overlap)
+
+    # De-dupe while preserving order
+    seen = set()
+    out = []
+    for s in snippets:
+        key = s
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(s)
+    return out
+
+
+def _dot(a: list[float], b: list[float]) -> float:
+    return sum(x * y for x, y in zip(a, b))
+
+
+def _norm(a: list[float]) -> float:
+    return (_dot(a, a) ** 0.5) if a else 0.0
+
+
+def cosine_sim(a: list[float], b: list[float]) -> float:
+    na = _norm(a)
+    nb = _norm(b)
+    if na <= 0 or nb <= 0:
+        return 0.0
+    return _dot(a, b) / (na * nb)
+
+
+def mmr_select(
+    *,
+    doc_embedding: list[float],
+    candidate_embeddings: list[list[float]],
+    candidates: list[str],
+    top_k: int,
+    lambda_mult: float,
+) -> list[int]:
+    """
+    Return indices of selected candidates by Maximal Marginal Relevance (MMR).
+    """
+    top_k = max(0, int(top_k or 0))
+    if top_k <= 0 or not candidates:
+        return []
+    lambda_mult = float(lambda_mult)
+    if lambda_mult < 0:
+        lambda_mult = 0.0
+    if lambda_mult > 1:
+        lambda_mult = 1.0
+
+    # Precompute relevance sim(candidate, doc)
+    rel = [cosine_sim(e, doc_embedding) for e in candidate_embeddings]
+    selected: list[int] = []
+    remaining = list(range(len(candidates)))
+
+    while remaining and len(selected) < min(top_k, len(candidates)):
+        if not selected:
+            best = max(remaining, key=lambda idx: rel[idx])
+            selected.append(best)
+            remaining.remove(best)
+            continue
+
+        def score(idx: int) -> float:
+            diversity = max(cosine_sim(candidate_embeddings[idx], candidate_embeddings[s]) for s in selected)
+            return lambda_mult * rel[idx] - (1.0 - lambda_mult) * diversity
+
+        best = max(remaining, key=score)
+        selected.append(best)
+        remaining.remove(best)
+
+    return selected
+
+
+def _mean_embedding(vectors: list[list[float]]) -> list[float]:
+    """
+    Compute element-wise mean of embeddings. Returns [] if empty.
+    """
+    if not vectors:
+        return []
+    dim = 0
+    for v in vectors:
+        if v:
+            dim = len(v)
+            break
+    if dim <= 0:
+        return []
+    acc = [0.0] * dim
+    n = 0
+    for v in vectors:
+        if not v or len(v) != dim:
+            continue
+        for i in range(dim):
+            acc[i] += float(v[i])
+        n += 1
+    if n <= 0:
+        return []
+    return [x / n for x in acc]
+
+
+async def generate_node_summary_mmr(node: dict, *, opt=None, model=None) -> str:
+    """
+    Extractive summarizer: chunk→embed (Ollama)→MMR→concat.
+    Returns the concatenated text; caller is responsible for writing summary_payload.
+    """
+    text = (node or {}).get("text") or ""
+    if not text.strip():
+        return ""
+
+    embed_model = getattr(opt, "ollama_embed_model", None) or "mxbai-embed-large"
+    top_k = int(getattr(opt, "mmr_top_k", 8))
+    lambda_mult = float(getattr(opt, "mmr_lambda", 0.5))
+    max_candidates = int(getattr(opt, "mmr_max_candidates", 64))
+    chunk_max_tokens = int(getattr(opt, "mmr_chunk_max_tokens", 220))
+    overlap = int(getattr(opt, "mmr_chunk_sentence_overlap", 1))
+
+    candidates = chunk_text_to_snippets(
+        text,
+        max_tokens=chunk_max_tokens,
+        sentence_overlap=overlap,
+        # IMPORTANT: use an Ollama-tuned token counter (fallback encoding) so chunks
+        # don't depend on the chat LLM tokenizer (e.g. qwen), which can under-estimate
+        # input length for embeddings.
+        model="ollama",
+    )
+    candidates = merge_near_duplicate_strings(candidates, opt=opt)
+    if max_candidates > 0:
+        candidates = candidates[:max_candidates]
+
+    if not candidates:
+        return text.strip()
+
+    # Embed candidates. Use their mean embedding as a proxy for the full-document embedding
+    # to avoid embedding extremely long inputs (which can exceed model context limits).
+    cand_emb = embed_texts_ollama(candidates, embed_model=embed_model)
+    doc_emb = _mean_embedding(cand_emb)
+
+    sel_idx = mmr_select(
+        doc_embedding=doc_emb,
+        candidate_embeddings=cand_emb,
+        candidates=candidates,
+        top_k=top_k,
+        lambda_mult=lambda_mult,
+    )
+    selected = [candidates[i] for i in sel_idx]
+    try:
+        node["_mmr_selected"] = [{"rank": r + 1, "snippet": s, "source": "text"} for r, s in enumerate(selected)]
+    except Exception:
+        pass
+    return "\n\n".join(selected).strip()
 
 def get_model_name(model=None):
     """Get the model name based on provider and input model."""
@@ -721,21 +1256,184 @@ async def generate_parent_node_summary(node, model=None):
     
     response = await ChatGPT_API_async(model, prompt)
     return response
+
+
+async def generate_parent_node_summary_mmr(node: dict, *, opt=None, model=None) -> str:
+    """
+    Extractive parent summarizer: build candidates from children summaries/snippets,
+    then chunk→embed→MMR→concat.
+    """
+    children = (node or {}).get("nodes") or []
+    if not children:
+        return ""
+
+    # Candidate snippets from children:
+    candidates: list[dict] = []
+    for ch in children:
+        if not isinstance(ch, dict):
+            continue
+        ch_id = ch.get("node_id")
+        payload = ch.get("summary_payload")
+        if isinstance(payload, dict) and payload.get("type") == "mmr":
+            selected = payload.get("selected")
+            if isinstance(selected, list):
+                for item in selected:
+                    if isinstance(item, dict) and str(item.get("snippet", "")).strip():
+                        candidates.append(
+                            {"snippet": str(item["snippet"]), "source": "child", "source_node_id": ch_id}
+                        )
+        # Fallback: use child summary string
+        s = ch.get("summary")
+        if isinstance(s, str) and s.strip():
+            candidates.append({"snippet": s.strip(), "source": "child", "source_node_id": ch_id})
+
+    # De-dupe by snippet text
+    seen = set()
+    dedup: list[dict] = []
+    for c in candidates:
+        sn = c.get("snippet") or ""
+        if sn in seen:
+            continue
+        seen.add(sn)
+        dedup.append(c)
+
+    dedup = merge_near_duplicate_candidates(dedup, opt=opt)
+
+    max_candidates = int(getattr(opt, "mmr_max_candidates", 64))
+    if max_candidates > 0:
+        dedup = dedup[:max_candidates]
+
+    snippets = [c["snippet"] for c in dedup if isinstance(c.get("snippet"), str) and c["snippet"].strip()]
+    if not snippets:
+        return ""
+
+    embed_model = getattr(opt, "ollama_embed_model", None) or "mxbai-embed-large"
+    top_k = int(getattr(opt, "mmr_top_k", 8))
+    lambda_mult = float(getattr(opt, "mmr_lambda", 0.5))
+
+    cand_emb = embed_texts_ollama(snippets, embed_model=embed_model)
+    doc_emb = _mean_embedding(cand_emb)
+
+    sel_idx = mmr_select(
+        doc_embedding=doc_emb,
+        candidate_embeddings=cand_emb,
+        candidates=snippets,
+        top_k=top_k,
+        lambda_mult=lambda_mult,
+    )
+    selected = [dedup[i] for i in sel_idx]
+    try:
+        node["_mmr_selected"] = [
+            {
+                "rank": r + 1,
+                "snippet": item.get("snippet", ""),
+                "source": item.get("source", "child"),
+                "source_node_id": item.get("source_node_id"),
+            }
+            for r, item in enumerate(selected)
+        ]
+    except Exception:
+        pass
+    return "\n\n".join([s["snippet"] for s in selected]).strip()
     
         
     
 
-async def generate_summaries_for_structure(structure, model=None):
+async def get_node_summary(
+    node: dict,
+    summary_token_threshold: int = 200,
+    model=None,
+    opt=None,
+) -> str | None:
+    """
+    Shortcut: if node text is short, avoid an LLM call and return the text.
+    Mirrors the Markdown pipeline behavior (see page_index_md.py).
+    """
+    node_text = None
+    if isinstance(node, dict):
+        node_text = node.get("text")
+    if not node_text:
+        return None
+    try:
+        num_tokens = count_tokens(node_text, model=model)
+    except Exception:
+        num_tokens = 0
+    if num_tokens < int(summary_token_threshold or 0):
+        # Still emit payload via caller if desired; return raw text as "summary"
+        return node_text
+
+    method = get_summary_method(opt=opt)
+    if method == "mmr":
+        return await generate_node_summary_mmr(node, opt=opt, model=model)
+    return await generate_node_summary(node, model=model)
+
+
+async def _gather_bounded(tasks, max_concurrency: int):
+    """
+    Run awaitables with bounded concurrency.
+    """
+    n = int(max_concurrency or 0)
+    if n <= 0:
+        return await asyncio.gather(*tasks)
+    sem = asyncio.Semaphore(n)
+
+    async def _run_one(coro):
+        async with sem:
+            return await coro
+
+    return await asyncio.gather(*[_run_one(t) for t in tasks])
+
+
+async def generate_summaries_for_structure(
+    structure,
+    model=None,
+    summary_token_threshold: int = 200,
+    max_concurrency: int = 8,
+    opt=None,
+):
     nodes = structure_to_list(structure)
-    tasks = [generate_node_summary(node, model=model) for node in nodes]
-    summaries = await asyncio.gather(*tasks)
+    tasks = [
+        get_node_summary(node, summary_token_threshold=summary_token_threshold, model=model, opt=opt)
+        for node in nodes
+    ]
+    summaries = await _gather_bounded(tasks, max_concurrency)
 
     for node, summary in zip(nodes, summaries):
         if summary is not None:
             node['summary'] = summary
+            method = get_summary_method(opt=opt)
+            if method == "mmr":
+                embed_model = getattr(opt, "ollama_embed_model", None) or "mxbai-embed-large"
+                selected_items = []
+                if isinstance(node, dict) and isinstance(node.get("_mmr_selected"), list):
+                    selected_items = node.get("_mmr_selected")
+                if isinstance(node, dict) and "_mmr_selected" in node:
+                    node.pop("_mmr_selected", None)
+                node["summary_payload"] = {
+                    "type": "mmr",
+                    "text": summary,
+                    "embed_backend": "ollama",
+                    "embed_model": embed_model,
+                    "k": int(getattr(opt, "mmr_top_k", 8)),
+                    "candidates": int(getattr(opt, "mmr_max_candidates", 64)),
+                    "selected": selected_items,
+                    "chunking": {
+                        "mode": "sentences",
+                        "max_tokens": int(getattr(opt, "mmr_chunk_max_tokens", 220)),
+                        "sentence_overlap": int(getattr(opt, "mmr_chunk_sentence_overlap", 1)),
+                    },
+                }
+            else:
+                node["summary_payload"] = {
+                    "type": "llm",
+                    "text": summary,
+                    "model": get_model_name(model),
+                    "token_threshold": int(summary_token_threshold or 0),
+                    "generated_from": "text",
+                }
     return structure
 
-async def generate_parent_node_summaries_for_structure(structure, model=None):
+async def generate_parent_node_summaries_for_structure(structure, model=None, max_concurrency: int = 8, opt=None):
     nodes = get_parent_nodes(structure)
     # To ensure parent node summaries are generated only after all children's summaries are ready,
     # we need to process from leaves upward (bottom-up). We'll organize nodes by depth and
@@ -776,10 +1474,38 @@ async def generate_parent_node_summaries_for_structure(structure, model=None):
 
         # Bottom-up: deepest parents first
         for depth in reversed(range(0, max_depth+1)):
-            tasks = [generate_parent_node_summary(node, model=model) for node in by_depth[depth]]
-            results = await asyncio.gather(*tasks) if tasks else []
+            method = get_parent_summary_method(opt=opt)
+            if method == "mmr":
+                tasks = [generate_parent_node_summary_mmr(node, opt=opt, model=model) for node in by_depth[depth]]
+            else:
+                tasks = [generate_parent_node_summary(node, model=model) for node in by_depth[depth]]
+            results = await _gather_bounded(tasks, max_concurrency) if tasks else []
             for node, summary in zip(by_depth[depth], results):
                 node['summary'] = summary
+                method = get_parent_summary_method(opt=opt)
+                if method == "mmr":
+                    embed_model = getattr(opt, "ollama_embed_model", None) or "mxbai-embed-large"
+                    selected_items = []
+                    if isinstance(node, dict) and isinstance(node.get("_mmr_selected"), list):
+                        selected_items = node.get("_mmr_selected")
+                    if isinstance(node, dict) and "_mmr_selected" in node:
+                        node.pop("_mmr_selected", None)
+                    node["summary_payload"] = {
+                        "type": "mmr",
+                        "text": summary,
+                        "embed_backend": "ollama",
+                        "embed_model": embed_model,
+                        "k": int(getattr(opt, "mmr_top_k", 8)),
+                        "candidates": int(getattr(opt, "mmr_max_candidates", 64)),
+                        "selected": selected_items,
+                    }
+                else:
+                    node["summary_payload"] = {
+                        "type": "llm",
+                        "text": summary,
+                        "model": get_model_name(model),
+                        "generated_from": "children",
+                    }
                 # Use id(node) as a unique object identity (safe since we're traversing memory graph)
                 summaries_map[id(node)] = summary
         # For output (to match interface): gather in original order in nodes_with_depth
@@ -814,21 +1540,123 @@ def create_clean_structure_for_description(structure):
 def create_clean_structure_for_abstract(structure):
     """
     Create a clean structure for document abstract generation,
-    excluding unnecessary fields like 'text'.
+    excluding unnecessary fields like 'text'. Recurses into child nodes.
     """
     if isinstance(structure, dict):
         clean_node = {}
-        # Only include essential fields for description
-        for key in ['title', 'summary', 'prefix_summary']:
+        for key in ['title', 'node_id', 'summary', 'prefix_summary']:
             if key in structure:
                 clean_node[key] = structure[key]
-        
-        
+        if 'nodes' in structure and structure['nodes']:
+            clean_node['nodes'] = create_clean_structure_for_abstract(structure['nodes'])
         return clean_node
     elif isinstance(structure, list):
         return [create_clean_structure_for_abstract(item) for item in structure]
     else:
         return structure
+
+
+def _collect_mmr_candidates_from_tree(structure) -> list[dict]:
+    """
+    Build snippet candidates from all nodes (same idea as parent MMR: prefer
+    summary_payload.selected snippets, else node summary string).
+    """
+    candidates: list[dict] = []
+    for node in structure_to_list(structure):
+        if not isinstance(node, dict):
+            continue
+        ch_id = node.get("node_id")
+        payload = node.get("summary_payload")
+        if isinstance(payload, dict) and payload.get("type") == "mmr":
+            selected = payload.get("selected")
+            if isinstance(selected, list):
+                for item in selected:
+                    if isinstance(item, dict) and str(item.get("snippet", "")).strip():
+                        candidates.append(
+                            {
+                                "snippet": str(item["snippet"]),
+                                "source": "node",
+                                "source_node_id": ch_id,
+                            }
+                        )
+        s = node.get("summary")
+        if isinstance(s, str) and s.strip():
+            candidates.append(
+                {"snippet": s.strip(), "source": "node", "source_node_id": ch_id}
+            )
+
+    seen: set[str] = set()
+    dedup: list[dict] = []
+    for c in candidates:
+        sn = c.get("snippet") or ""
+        if sn in seen:
+            continue
+        seen.add(sn)
+        dedup.append(c)
+    return dedup
+
+
+def generate_doc_abstract_mmr(structure, opt=None, model=None) -> tuple[str, dict]:
+    """
+    Document-level extractive abstract: pool snippets from all node summaries,
+    embed + MMR + concat (same spirit as parent node MMR).
+    """
+    dedup = _collect_mmr_candidates_from_tree(structure)
+    dedup = merge_near_duplicate_candidates(dedup, opt=opt)
+    max_candidates = int(getattr(opt, "mmr_max_candidates", 64))
+    if max_candidates > 0:
+        dedup = dedup[:max_candidates]
+
+    snippets = [c["snippet"] for c in dedup if isinstance(c.get("snippet"), str) and c["snippet"].strip()]
+    embed_model = getattr(opt, "ollama_embed_model", None) or "mxbai-embed-large"
+    top_k = int(getattr(opt, "mmr_top_k", 8))
+    lambda_mult = float(getattr(opt, "mmr_lambda", 0.5))
+
+    if not snippets:
+        payload = {
+            "type": "mmr",
+            "text": "",
+            "embed_backend": "ollama",
+            "embed_model": embed_model,
+            "k": top_k,
+            "candidates": 0,
+            "selected": [],
+            "generated_from": "all_node_summaries",
+        }
+        return "", payload
+
+    cand_emb = embed_texts_ollama(snippets, embed_model=embed_model)
+    doc_emb = _mean_embedding(cand_emb)
+    sel_idx = mmr_select(
+        doc_embedding=doc_emb,
+        candidate_embeddings=cand_emb,
+        candidates=snippets,
+        top_k=top_k,
+        lambda_mult=lambda_mult,
+    )
+    selected_rows = [dedup[i] for i in sel_idx]
+    text = "\n\n".join([s["snippet"] for s in selected_rows]).strip()
+    selected_items = [
+        {
+            "rank": r + 1,
+            "snippet": item.get("snippet", ""),
+            "source": item.get("source", "node"),
+            "source_node_id": item.get("source_node_id"),
+        }
+        for r, item in enumerate(selected_rows)
+    ]
+    payload = {
+        "type": "mmr",
+        "text": text,
+        "embed_backend": "ollama",
+        "embed_model": embed_model,
+        "k": top_k,
+        "candidates": len(dedup),
+        "selected": selected_items,
+        "generated_from": "all_node_summaries",
+    }
+    return text, payload
+
 
 def generate_keywords(abstract, model=None):
     prompt = {}
@@ -867,7 +1695,16 @@ def generate_doc_description(structure, model=None):
     response = ChatGPT_API(model, prompt)
     return response
 
-def generate_doc_abstract(structure, model=None):
+def generate_doc_abstract(structure, model=None, opt=None) -> tuple[str, dict]:
+    """
+    Document abstract: LLM (abstractive) or MMR over pooled node summaries (extractive).
+    Returns (abstract_text, abstract_payload) for downstream RAG.
+    """
+    method = get_abstract_method(opt=opt)
+    if method == "mmr":
+        return generate_doc_abstract_mmr(structure, opt=opt, model=model)
+
+    clean_structure = create_clean_structure_for_abstract(structure)
     prompt = {}
     prompt['system_prompt'] = f"""Your are an expert in generating abstracts for a document.
     You are given a structure of summaries of a document. Your task is to generate a concise abstract for the document, which makes it easy to have a quick idea of the content of the document.
@@ -881,14 +1718,21 @@ def generate_doc_abstract(structure, model=None):
     The abstract should be no more than 300 words.
 
     Directly return the description, do not include any other text."""
-        
+
     prompt['user_prompt'] = f"""
-    Document Structure: {structure}
-    
+    Document Structure: {clean_structure}
+
     Directly return the abstract, do not include any other text.
     """
     response = ChatGPT_API(model, prompt)
-    return response
+    text = response if isinstance(response, str) else str(response)
+    payload = {
+        "type": "llm",
+        "text": text,
+        "model": get_model_name(model),
+        "generated_from": "structure_summaries",
+    }
+    return text, payload
 
 def reorder_dict(data, key_order):
     if not key_order:
@@ -938,7 +1782,8 @@ class ConfigLoader:
             user_dict = user_opt
         else:
             raise TypeError("user_opt must be dict, config(SimpleNamespace) or None")
-
         self._validate_keys(user_dict)
+        explicit_keys = set(user_dict.keys())
         merged = {**self._default_dict, **user_dict}
+        merged = _apply_method_env_overrides_to_merged(merged, explicit_keys)
         return config(**merged)

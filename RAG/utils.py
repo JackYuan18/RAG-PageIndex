@@ -388,6 +388,12 @@ async def tree_search(query: str, doc_info: Dict[str, Any], model: Optional[str]
     The tree structure has parent nodes that may contain child nodes (nested in a "nodes" field).
     Each node contains a node id, node title, and a corresponding summary.
 
+    NOTE ON SUMMARY FORMATS:
+    - Some nodes may also include a "summary_payload" object with a "type" discriminator.
+      - type="mmr": summary is extractive and may contain concatenated high-signal snippets (exact phrases).
+      - type="llm": summary is abstractive.
+    - When type="mmr", prefer matching on concrete terms, entities, and exact phrases in the snippets.
+
     Your task is to find all nodes that are likely to contain the answer to the question.
 
     IMPORTANT RULES:
@@ -602,4 +608,5 @@ def print_retrieved_nodes(node_ids: List[str], node_map: Dict[str, Dict[str, Any
 
         
 if __name__ == "__main__":
-    main()
+    # This module provides helpers; run `RAG/rag_query.py` to execute a query end-to-end.
+    raise SystemExit("Run `python3 RAG/rag_query.py --query \"...\"` instead.")

@@ -4,5 +4,30 @@ max_page_num_each_node: 10
 max_token_num_each_node: 20000
 if_add_node_id: "yes"
 if_add_node_summary: "yes"
+if_add_parent_node_summary: "yes"
 if_add_doc_description: "no"
 if_add_node_text: "no"
+summary_token_threshold: 200
+summary_max_concurrency: 8
+parent_summary_max_concurrency: 8
+
+# Summarization backends (leaf + parent)
+# - llm: existing behavior (ChatGPT_API_async)
+# - mmr: chunk → embed (Ollama embeddings) → MMR diverse top-k → concat
+summary_method: "llm"
+parent_summary_method: "llm"
+# Document-level abstract: llm (ChatGPT_API) or mmr (pool node summaries → embed → MMR)
+abstract_method: "llm"
+
+# MMR summarizer parameters
+mmr_top_k: 8
+mmr_lambda: 0.5
+mmr_max_candidates: 64
+mmr_chunk_max_tokens: 50
+mmr_chunk_sentence_overlap: 1
+# Near-duplicate merge before MMR (difflib string similarity; longest snippet kept)
+mmr_near_dup_merge: "yes"
+mmr_near_dup_ratio: 0.92
+
+# Ollama embeddings (OpenAI-compatible /v1/embeddings)
+ollama_embed_model: "mxbai-embed-large"
