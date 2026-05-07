@@ -1,0 +1,266 @@
+{
+  "run_id": "20260414_114604",
+  "model": "qwen",
+  "indexing": [
+    {
+      "pdf_path": "/home/zyuan/NSTSCE_Bot/PageIndex/Database/NSTSCE_L3System_Final.pdf",
+      "wall_seconds": 125.99,
+      "step_timings": [
+        {
+          "step": "Step 1: Parsing PDF",
+          "seconds": 0.456
+        },
+        {
+          "step": "Step 2: Extracting title and authors",
+          "seconds": 1.365
+        },
+        {
+          "step": "Step 3: Building tree structure",
+          "seconds": 52.74
+        },
+        {
+          "step": "Step 4: Adding node ids",
+          "seconds": 0.0
+        },
+        {
+          "step": "Step 5: Adding node text",
+          "seconds": 0.0
+        },
+        {
+          "step": "Step 6: Generating node summaries",
+          "seconds": 34.366
+        },
+        {
+          "step": "Step 7: Generating parent node summaries",
+          "seconds": 5.761
+        },
+        {
+          "step": "Step 8: Generating document abstract",
+          "seconds": 5.688
+        },
+        {
+          "step": "Step 9: Generating keywords",
+          "seconds": 25.181
+        }
+      ]
+    },
+    {
+      "pdf_path": "/home/zyuan/NSTSCE_Bot/PageIndex/Database/AAA NSTSCE Training Drivers on L2 Systems.pdf",
+      "wall_seconds": 460.435,
+      "step_timings": [
+        {
+          "step": "Step 1: Parsing PDF",
+          "seconds": 0.437
+        },
+        {
+          "step": "Step 2: Extracting title and authors",
+          "seconds": 2.218
+        },
+        {
+          "step": "Step 3: Building tree structure",
+          "seconds": 411.796
+        },
+        {
+          "step": "Step 4: Adding node ids",
+          "seconds": 0.0
+        },
+        {
+          "step": "Step 5: Adding node text",
+          "seconds": 0.0
+        },
+        {
+          "step": "Step 6: Generating node summaries",
+          "seconds": 28.813
+        },
+        {
+          "step": "Step 7: Generating parent node summaries",
+          "seconds": 13.089
+        },
+        {
+          "step": "Step 8: Generating document abstract",
+          "seconds": 3.141
+        },
+        {
+          "step": "Step 9: Generating keywords",
+          "seconds": 0.497
+        }
+      ]
+    },
+    {
+      "pdf_path": "/home/zyuan/NSTSCE_Bot/PageIndex/Database/AVSC Best Practice for Developing ADS.pdf",
+      "wall_seconds": 98.697,
+      "step_timings": [
+        {
+          "step": "Step 1: Parsing PDF",
+          "seconds": 0.358
+        },
+        {
+          "step": "Step 2: Extracting title and authors",
+          "seconds": 1.757
+        },
+        {
+          "step": "Step 3: Building tree structure",
+          "seconds": 60.842
+        },
+        {
+          "step": "Step 4: Adding node ids",
+          "seconds": 0.0
+        },
+        {
+          "step": "Step 5: Adding node text",
+          "seconds": 0.0
+        },
+        {
+          "step": "Step 6: Generating node summaries",
+          "seconds": 26.244
+        },
+        {
+          "step": "Step 7: Generating parent node summaries",
+          "seconds": 5.779
+        },
+        {
+          "step": "Step 8: Generating document abstract",
+          "seconds": 2.813
+        },
+        {
+          "step": "Step 9: Generating keywords",
+          "seconds": 0.487
+        }
+      ]
+    },
+    {
+      "pdf_path": "/home/zyuan/NSTSCE_Bot/PageIndex/Database/NSTSCE_NewTechOutreach_Final.pdf",
+      "wall_seconds": 162.509,
+      "step_timings": [
+        {
+          "step": "Step 1: Parsing PDF",
+          "seconds": 0.598
+        },
+        {
+          "step": "Step 2: Extracting title and authors",
+          "seconds": 1.064
+        },
+        {
+          "step": "Step 3: Building tree structure",
+          "seconds": 84.565
+        },
+        {
+          "step": "Step 4: Adding node ids",
+          "seconds": 0.0
+        },
+        {
+          "step": "Step 5: Adding node text",
+          "seconds": 0.0
+        },
+        {
+          "step": "Step 6: Generating node summaries",
+          "seconds": 57.65
+        },
+        {
+          "step": "Step 7: Generating parent node summaries",
+          "seconds": 14.709
+        },
+        {
+          "step": "Step 8: Generating document abstract",
+          "seconds": 3.058
+        },
+        {
+          "step": "Step 9: Generating keywords",
+          "seconds": 0.444
+        }
+      ]
+    }
+  ],
+  "rag": [
+    {
+      "query": "In vtti, who works on the challenges of L3 autonomous systems?",
+      "wall_seconds": 33.297,
+      "step_timings": [
+        {
+          "step": "Step 1: Matching query to keywords in DocIndex",
+          "seconds": 2.073
+        },
+        {
+          "step": "Step 2: Loading document structures",
+          "seconds": 0.002
+        },
+        {
+          "step": "Step 3: Performing reasoning-based tree search",
+          "seconds": 29.162
+        },
+        {
+          "step": "Step 4: Extracting context from retrieved nodes",
+          "seconds": 0.0
+        },
+        {
+          "step": "Step 5: Generating per-document answers",
+          "seconds": 0.978
+        },
+        {
+          "step": "Step 6: Combining answers",
+          "seconds": 0.695
+        }
+      ]
+    },
+    {
+      "query": "What are the challenges of L3 autonomous driving systems?",
+      "wall_seconds": 51.61,
+      "step_timings": [
+        {
+          "step": "Step 1: Matching query to keywords in DocIndex",
+          "seconds": 2.251
+        },
+        {
+          "step": "Step 2: Loading document structures",
+          "seconds": 0.002
+        },
+        {
+          "step": "Step 3: Performing reasoning-based tree search",
+          "seconds": 29.954
+        },
+        {
+          "step": "Step 4: Extracting context from retrieved nodes",
+          "seconds": 0.0
+        },
+        {
+          "step": "Step 5: Generating per-document answers",
+          "seconds": 13.452
+        },
+        {
+          "step": "Step 6: Combining answers",
+          "seconds": 5.575
+        }
+      ]
+    },
+    {
+      "query": "Who works on Gaussian process regression?",
+      "wall_seconds": 20.898,
+      "step_timings": [
+        {
+          "step": "Step 1: Matching query to keywords in DocIndex",
+          "seconds": 1.392
+        },
+        {
+          "step": "Step 2: Loading document structures",
+          "seconds": 0.001
+        },
+        {
+          "step": "Step 3: Performing reasoning-based tree search",
+          "seconds": 16.235
+        },
+        {
+          "step": "Step 4: Extracting context from retrieved nodes",
+          "seconds": 0.0
+        },
+        {
+          "step": "Step 5: Generating per-document answers",
+          "seconds": 2.154
+        },
+        {
+          "step": "Step 6: Combining answers",
+          "seconds": 0.743
+        }
+      ]
+    }
+  ]
+}

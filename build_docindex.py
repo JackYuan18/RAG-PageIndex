@@ -79,6 +79,13 @@ if __name__ == "__main__":
         default=None,
         help='Document abstract backend (opt.abstract_method); omit to use config / env',
     )
+    parser.add_argument(
+        '--keyword-method',
+        dest='keyword_method',
+        choices=['llm', 'rich', 'embed_mmr'],
+        default=None,
+        help='Keyword generation backend (opt.keyword_method); omit to use config / env',
+    )
     args = parser.parse_args()
     print(f'Using model: {args.model}')
     # Validate database directory
@@ -119,6 +126,7 @@ if __name__ == "__main__":
         summary_method=args.summary_method,
         parent_summary_method=args.parent_summary_method,
         abstract_method=args.abstract_method,
+        keyword_method=args.keyword_method,
         ai_mode=args.pageindex_ai_mode
     )
     

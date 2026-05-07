@@ -1,0 +1,44 @@
+{
+  "test_datetime": "2026-04-14 11:57:29",
+  "doc": "/home/zyuan/NSTSCE_Bot/PageIndex/Database/AVSC Best Practice for Developing ADS.pdf",
+  "success": true,
+  "total_seconds": 98.283,
+  "step_timings": [
+    {
+      "step": "Step 1: Parsing PDF",
+      "seconds": 0.358
+    },
+    {
+      "step": "Step 2: Extracting title and authors",
+      "seconds": 1.757
+    },
+    {
+      "step": "Step 3: Building tree structure",
+      "seconds": 60.842
+    },
+    {
+      "step": "Step 4: Adding node ids",
+      "seconds": 0.0
+    },
+    {
+      "step": "Step 5: Adding node text",
+      "seconds": 0.0
+    },
+    {
+      "step": "Step 6: Generating node summaries",
+      "seconds": 26.244
+    },
+    {
+      "step": "Step 7: Generating parent node summaries",
+      "seconds": 5.779
+    },
+    {
+      "step": "Step 8: Generating document abstract",
+      "seconds": 2.813
+    },
+    {
+      "step": "Step 9: Generating keywords",
+      "seconds": 0.487
+    }
+  ]
+}

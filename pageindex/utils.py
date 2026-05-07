@@ -66,6 +66,17 @@ def get_abstract_method(opt=None) -> str:
     return _normalize_choice(getattr(opt, "abstract_method", None), {"llm", "mmr"}, "llm")
 
 
+def get_keyword_method(opt=None) -> str:
+    """
+    Document keyword generation backend.
+    - llm: generate keywords from doc_abstract text (existing behavior)
+    - rich: generate keywords from richer context (title + section titles + snippets)
+    """
+    if opt is None:
+        return "llm"
+    return _normalize_choice(getattr(opt, "keyword_method", None), {"llm", "rich", "embed_mmr"}, "rich")
+
+
 def _apply_method_env_overrides_to_merged(
     merged: dict, explicit_user_keys: set
 ) -> dict:
@@ -86,18 +97,11 @@ def _apply_method_env_overrides_to_merged(
         v = _env_str("PAGEINDEX_ABSTRACT_METHOD")
         if v:
             out["abstract_method"] = v
+    if "keyword_method" not in explicit_user_keys:
+        v = _env_str("PAGEINDEX_KEYWORD_METHOD")
+        if v:
+            out["keyword_method"] = v
     return out
-
-
-def _mmr_merge_near_duplicates_enabled(opt) -> bool:
-    """Whether to merge near-duplicate snippet strings before MMR (string similarity, not embeddings)."""
-    env = _env_str("PAGEINDEX_MMR_NEAR_DUP_MERGE")
-    if env is not None:
-        return str(env).lower() in ("1", "true", "yes", "y", "on")
-    if opt is None:
-        return True
-    v = getattr(opt, "mmr_near_dup_merge", "yes")
-    return str(v).lower() in ("yes", "true", "1", "y", "on")
 
 
 def _mmr_near_dup_ratio_value(opt) -> float:
@@ -121,7 +125,7 @@ def merge_near_duplicate_strings(strings: list[str], opt=None) -> list[str]:
     Drop near-duplicate strings using difflib similarity (longest-first as canonical).
     Exact duplicates are already removed earlier; this catches minor wording/spacing variants.
     """
-    if not strings or not _mmr_merge_near_duplicates_enabled(opt):
+    if not strings:
         return strings
     ratio = _mmr_near_dup_ratio_value(opt)
     sorted_s = sorted(
@@ -1681,6 +1685,267 @@ def generate_keywords(abstract, model=None):
     """
     response = ChatGPT_API(model, prompt)
     return response
+
+
+def _collect_section_titles_for_keywords(structure, opt=None) -> list[str]:
+    max_headers = int(getattr(opt, "keywords_rich_max_headers", 40) or 40) if opt is not None else 40
+    titles: list[str] = []
+    for node in structure_to_list(structure):
+        if not isinstance(node, dict):
+            continue
+        t = node.get("title")
+        if isinstance(t, str) and t.strip():
+            titles.append(t.strip())
+    # Exact dedupe while keeping order
+    seen = set()
+    uniq: list[str] = []
+    for t in titles:
+        if t in seen:
+            continue
+        seen.add(t)
+        uniq.append(t)
+        if max_headers > 0 and len(uniq) >= max_headers:
+            break
+    return uniq
+
+
+def _collect_snippets_for_keywords(structure, opt=None) -> list[str]:
+    max_snippets = int(getattr(opt, "keywords_rich_max_snippets", 40) or 40) if opt is not None else 40
+    snippet_max_chars = int(getattr(opt, "keywords_rich_snippet_max_chars", 400) or 400) if opt is not None else 400
+    rows = _collect_mmr_candidates_from_tree(structure)
+    rows = merge_near_duplicate_candidates(rows, opt=opt)
+    snippets: list[str] = []
+    for r in rows:
+        s = str(r.get("snippet", "")).strip()
+        if not s:
+            continue
+        if snippet_max_chars > 0 and len(s) > snippet_max_chars:
+            s = s[:snippet_max_chars].rstrip() + "…"
+        snippets.append(s)
+        if max_snippets > 0 and len(snippets) >= max_snippets:
+            break
+    return snippets
+
+
+def _keywords_embed_stopwords() -> set[str]:
+    # Compact stopword list for keyword candidate filtering (not for full NLP).
+    return {
+        "a","an","the","and","or","but","if","then","than","when","while","where","which","who","whom","whose",
+        "to","of","in","on","for","with","without","as","at","by","from","into","over","under","between","within",
+        "is","are","was","were","be","been","being","do","does","did","done",
+        "this","that","these","those","it","its","they","them","their","we","our","you","your","i","me","my",
+        "can","could","may","might","must","should","would","will",
+        "not","no","yes",
+        "using","use","used","via","based","approach","method","methods","results","result","paper","study","work",
+    }
+
+
+def _normalize_keyword_phrase(s: str, *, max_words: int = 3) -> str | None:
+    if not isinstance(s, str):
+        return None
+    t = s.strip().lower()
+    if not t:
+        return None
+    t = re.sub(r"[\s_]+", " ", t).strip()
+    t = t.strip(" .,:;|/\\-–—()[]{}<>\"'`")
+    t = re.sub(r"\s+", " ", t).strip()
+    if not t:
+        return None
+    # Keep only words/numbers; drop stray symbols.
+    words = re.findall(r"[a-z0-9]+", t)
+    if not words:
+        return None
+    if max_words > 0:
+        words = words[:max_words]
+    if len(words) == 1 and len(words[0]) <= 2:
+        return None
+    if all(w.isdigit() for w in words):
+        return None
+    return " ".join(words)
+
+
+def _extract_candidate_ngrams(snippets: list[str], opt=None) -> list[str]:
+    """
+    Mine 1..N-grams from snippets and return a ranked list of phrase candidates.
+    Uses simple regex tokenization + frequency filtering (no external NLP deps).
+    """
+    max_n = int(getattr(opt, "keywords_embed_ngram_max_n", 3) or 3) if opt is not None else 3
+    max_candidates = int(getattr(opt, "keywords_embed_max_candidates", 500) or 500) if opt is not None else 500
+    min_df = int(getattr(opt, "keywords_embed_min_df", 2) or 2) if opt is not None else 2
+
+    stop = _keywords_embed_stopwords()
+    df: dict[str, int] = {}
+
+    for s in snippets or []:
+        if not isinstance(s, str) or not s.strip():
+            continue
+        tokens = re.findall(r"[a-z0-9]+", s.lower())
+        if not tokens:
+            continue
+        # Build set of grams present in this snippet (document frequency across snippets).
+        present: set[str] = set()
+        L = len(tokens)
+        for n in range(1, max(1, max_n) + 1):
+            for i in range(0, L - n + 1):
+                gram_tokens = tokens[i : i + n]
+                if any(len(w) <= 2 for w in gram_tokens):
+                    continue
+                if gram_tokens[0] in stop or gram_tokens[-1] in stop:
+                    continue
+                stop_frac = sum(1 for w in gram_tokens if w in stop) / float(n)
+                if stop_frac >= 0.67:
+                    continue
+                gram = " ".join(gram_tokens)
+                present.add(gram)
+        for g in present:
+            df[g] = df.get(g, 0) + 1
+
+    # Filter by min_df and keep top by df
+    items = [(g, c) for g, c in df.items() if c >= max(1, min_df)]
+    items.sort(key=lambda x: (x[1], len(x[0])), reverse=True)
+    grams = [g for g, _c in items[: max(1, max_candidates)]]
+    return grams
+
+
+def generate_keywords_embed_mmr(structure, *, doc_title: str | None = None, opt=None, model=None) -> tuple[list[str], dict]:
+    """
+    LLM-free keyword generation: mine candidates (headers + n-grams), embed + MMR select.
+    Returns (keywords_list, payload).
+    """
+    section_titles = _collect_section_titles_for_keywords(structure, opt=opt)
+    snippets = _collect_snippets_for_keywords(structure, opt=opt)
+    grams = _extract_candidate_ngrams(snippets, opt=opt)
+
+    candidates: list[str] = []
+    if isinstance(doc_title, str) and doc_title.strip():
+        candidates.append(doc_title.strip())
+    candidates.extend(section_titles)
+    candidates.extend(grams)
+
+    norm: list[str] = []
+    seen = set()
+    for c in candidates:
+        p = _normalize_keyword_phrase(c, max_words=3)
+        if not p or p in seen:
+            continue
+        seen.add(p)
+        norm.append(p)
+
+    # Merge near-dups (always on) and cap candidate count for embedding cost.
+    norm = merge_near_duplicate_strings(norm, opt=opt)
+    cap = int(getattr(opt, "keywords_embed_max_candidates", 500) or 500) if opt is not None else 500
+    if cap > 0:
+        norm = norm[:cap]
+
+    embed_model = getattr(opt, "ollama_embed_model", None) or "mxbai-embed-large"
+    top_k = int(getattr(opt, "keywords_embed_top_k", 10) or 10) if opt is not None else 10
+    lambda_mult = float(getattr(opt, "keywords_embed_lambda", 0.5) or 0.5) if opt is not None else 0.5
+
+    if not norm:
+        return [], {
+            "type": "embed_mmr",
+            "text": "",
+            "embed_backend": "ollama",
+            "embed_model": embed_model,
+            "k": top_k,
+            "candidates": 0,
+            "selected": [],
+            "generated_from": "headers+ngrams",
+        }
+
+    cand_emb = embed_texts_ollama(norm, embed_model=embed_model)
+    doc_emb = _mean_embedding(cand_emb)
+    sel_idx = mmr_select(
+        doc_embedding=doc_emb,
+        candidate_embeddings=cand_emb,
+        candidates=norm,
+        top_k=top_k,
+        lambda_mult=lambda_mult,
+    )
+    selected = [norm[i] for i in sel_idx]
+    payload = {
+        "type": "embed_mmr",
+        "text": ", ".join(selected),
+        "embed_backend": "ollama",
+        "embed_model": embed_model,
+        "k": top_k,
+        "lambda": float(lambda_mult),
+        "candidates": len(norm),
+        "selected": [{"rank": r + 1, "keyword": kw} for r, kw in enumerate(selected)],
+        "generated_from": "headers+ngrams",
+    }
+    return selected, payload
+
+
+def generate_keywords_rich(structure, *, doc_title: str | None = None, model=None, opt=None) -> str:
+    """
+    Generate keywords using a richer candidate set than the doc_abstract string:
+    document title + section titles + many representative snippets.
+    """
+    section_titles = _collect_section_titles_for_keywords(structure, opt=opt)
+    snippets = _collect_snippets_for_keywords(structure, opt=opt)
+
+    prompt = {}
+    prompt["system_prompt"] = f"""Your are an expert in generating keywords for a document.
+You are given a document title (optional), a list of section titles, and a set of representative snippets from the document.
+Your task is to generate a list of keywords with distinct meanings for the document, which makes it helpful for users to find relevant documents given related queries.
+
+Rules:
+- Keywords should be short and concise (no more than three words).
+- Keywords must be distinct and should not be synonyms.
+- Keywords must be in English.
+- Cover main topics, methods, and results.
+- Do not return more than 10 keywords.
+- Directly return the keywords as a string separated by commas in the following format: "keyword1, keyword2, keyword3, ..."
+"""
+    prompt["user_prompt"] = f"""
+Title: {doc_title or ""}
+
+Section titles:
+{json.dumps(section_titles, ensure_ascii=False, indent=2)}
+
+Representative snippets:
+{json.dumps(snippets, ensure_ascii=False, indent=2)}
+
+Directly return the keywords, do not include any other text.
+"""
+    response = ChatGPT_API(model, prompt)
+    return response
+
+
+def generate_doc_keywords(structure, doc_abstract: str, *, doc_title: str | None = None, model=None, opt=None) -> tuple[str, list[str] | None, dict]:
+    """
+    Keyword generation entrypoint with a switchable backend.
+    Returns (keywords_string, keywords_payload).
+    """
+    method = get_keyword_method(opt=opt)
+    if method == "embed_mmr":
+        keywords_list, payload = generate_keywords_embed_mmr(structure, doc_title=doc_title, model=model, opt=opt)
+        return (", ".join(keywords_list), keywords_list, payload)
+    if method == "rich":
+        text = generate_keywords_rich(structure, doc_title=doc_title, model=model, opt=opt)
+        return (
+            text,
+            None,
+            {
+                "type": "llm",
+                "method": "rich",
+                "model": get_model_name(model),
+                "generated_from": "title+section_titles+snippets",
+            },
+        )
+
+    text = generate_keywords(doc_abstract, model=model)
+    return (
+        text,
+        None,
+        {
+            "type": "llm",
+            "method": "llm",
+            "model": get_model_name(model),
+            "generated_from": "doc_abstract",
+        },
+    )
 
 def generate_doc_description(structure, model=None):
     prompt = {}

@@ -1,0 +1,42 @@
+{
+  "query": "What are the challenges of L3 autonomous driving systems?",
+  "matched_documents": [
+    "./results/Lightweight_Distributed_Gaussian_Process_Regression_for_Online_Machine_Learning_structure.json",
+    "./results/AAA NSTSCE Training Drivers on L2 Systems_structure.json",
+    "./results/Data-Driven_Characterization_of_Motorcycle_Riders_Kinematics_and_Crash_Risk_Final_structure.json",
+    "./results/J3045_202502_structure.json",
+    "./results/Communication-aware_Distributed_Gaussian_Process_Regression_Algorithms_for_Real-time_Machine_Learning_structure.json",
+    "./results/NSTSCE_L3System_Final_structure.json",
+    "./results/NSTSCE_NewTechOutreach_Final_structure.json",
+    "./results/AVSC Best Practice for Developing ADS_structure.json"
+  ],
+  "retrieved_contexts": [],
+  "answer": "No answer could be generated from the retrieved contexts.",
+  "sources": [],
+  "step_timings": [
+    {
+      "step": "Step 1: Matching query to keywords in DocIndex",
+      "seconds": 154.881
+    },
+    {
+      "step": "Step 2: Loading document structures",
+      "seconds": 0.008
+    },
+    {
+      "step": "Step 3: Performing reasoning-based tree search",
+      "seconds": 124.587
+    },
+    {
+      "step": "Step 4: Extracting context from retrieved nodes",
+      "seconds": 0.0
+    },
+    {
+      "step": "Step 5: Generating per-document answers",
+      "seconds": 0.0
+    },
+    {
+      "step": "Step 6: Combining answers",
+      "seconds": 0.0
+    }
+  ]
+}

@@ -49,6 +49,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default="qwen")
     ap.add_argument("--out-dir", default=os.path.join(PROJECT_ROOT, "benchmarks", "runs"))
+    ap.add_argument(
+        "--pageindex-ai-mode",
+        choices=["llm", "rule", "auto"],
+        default="rule",
+        help="Optional pass-through to run_pageindex.py --pageindex-ai-mode",
+    )
     ap.add_argument("--ragas-dataset", default=None, help="Optional JSONL dataset path for RAGAS eval (see eval/README.md)")
     ap.add_argument("--ragas-judge-model", default="gpt-5.1", help="OpenAI model name for RAGAS judging LLM")
     ap.add_argument(
@@ -93,6 +99,8 @@ def main():
             "--timings-out",
             timings_out,
         ]
+        if args.pageindex_ai_mode:
+            cmd.extend(["--pageindex-ai-mode", args.pageindex_ai_mode])
         print(f"[{done}/{total_jobs}] Indexing: {pdf}")
         rc, wall = run_subprocess(cmd)
         results["indexing"].append(indexing_meta_entry(pdf, timings_out, wall))

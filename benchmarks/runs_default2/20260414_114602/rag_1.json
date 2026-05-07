@@ -1,0 +1,40 @@
+{
+  "query": "In vtti, who works on the challenges of L3 autonomous systems?",
+  "matched_documents": [
+    "./results/NSTSCE_L3System_Final_structure.json",
+    "./results/J3045_202502_structure.json",
+    "./results/AAA NSTSCE Training Drivers on L2 Systems_structure.json",
+    "./results/Data-Driven_Characterization_of_Motorcycle_Riders_Kinematics_and_Crash_Risk_Final_structure.json",
+    "./results/NSTSCE_NewTechOutreach_Final_structure.json",
+    "./results/AVSC Best Practice for Developing ADS_structure.json"
+  ],
+  "retrieved_contexts": [],
+  "answer": "No answer could be generated from the retrieved contexts.",
+  "sources": [],
+  "step_timings": [
+    {
+      "step": "Step 1: Matching query to keywords in DocIndex",
+      "seconds": 8.145
+    },
+    {
+      "step": "Step 2: Loading document structures",
+      "seconds": 0.005
+    },
+    {
+      "step": "Step 3: Performing reasoning-based tree search",
+      "seconds": 106.16
+    },
+    {
+      "step": "Step 4: Extracting context from retrieved nodes",
+      "seconds": 0.0
+    },
+    {
+      "step": "Step 5: Generating per-document answers",
+      "seconds": 0.0
+    },
+    {
+      "step": "Step 6: Combining answers",
+      "seconds": 0.0
+    }
+  ]
+}

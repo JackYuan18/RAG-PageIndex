@@ -2,6 +2,9 @@ import argparse
 import json
 import os
 import time
+import re
+import random
+import hashlib
 from collections import defaultdict
 from typing import Any, Dict, List, Optional
 
@@ -93,7 +96,7 @@ def make_merged_keyword(kw1, kw2, model=None):
     
     response = ChatGPT_API(model, prompt)
     return response
-def merge_keywords(keywords, doc_index, model=None): 
+def merge_keywords_llm(keywords, doc_index, model=None): 
 
     updated_keywords = keywords.copy()
     updated_doc_index = doc_index.copy()
@@ -123,6 +126,107 @@ def merge_keywords(keywords, doc_index, model=None):
     return updated_keywords, updated_doc_index
 
 
+def _kw_norm(s: str) -> str:
+    s = str(s or "").strip().lower()
+    s = re.sub(r"\s+", " ", s)
+    s = s.strip(" ,.;:()[]{}<>\"'`")
+    return s
+
+
+def _lsh_signature(vec: list[float], planes: list[list[float]]) -> int:
+    sig = 0
+    for i, p in enumerate(planes):
+        if sum((a * b) for a, b in zip(vec, p)) >= 0:
+            sig |= (1 << i)
+    return sig
+
+
+def _make_lsh_planes(dim: int, bits: int, seed: int) -> list[list[float]]:
+    rng = random.Random(int(seed) & 0xFFFFFFFF)
+    planes: list[list[float]] = []
+    for _ in range(max(1, int(bits))):
+        # Random hyperplane with roughly unit variance components
+        planes.append([rng.uniform(-1.0, 1.0) for _ in range(dim)])
+    return planes
+
+
+def merge_keywords_embed_ann(keywords, doc_index, *, opt=None):
+    """
+    Scalable keyword merge: embed keywords and map new keywords to nearest existing keyword
+    (cosine similarity) using a simple LSH-based ANN index.
+
+    - Keeps the existing keyword as canonical (no LLM renaming).
+    - Returns updated_keywords list; doc_index keys are not renamed (only reused).
+    """
+    updated_keywords = [str(k).strip() for k in (keywords or []) if str(k).strip()]
+    if not updated_keywords:
+        return [], doc_index
+
+    existing_keys = [k for k in list(doc_index.keys()) if str(k).strip()]
+    if not existing_keys:
+        return updated_keywords, doc_index
+
+    embed_model = getattr(opt, "ollama_embed_model", None) or "mxbai-embed-large"
+    threshold = float(getattr(opt, "keyword_merge_embed_threshold", 0.88) or 0.88)
+    lsh_bits = int(getattr(opt, "keyword_merge_embed_lsh_bits", 18) or 18)
+    max_bucket_scan = int(getattr(opt, "keyword_merge_embed_max_bucket_scan", 64) or 64)
+
+    # Normalize to reduce exact duplicates/variants up front.
+    existing_norm = [_kw_norm(k) for k in existing_keys]
+    existing_map = {n: k for n, k in zip(existing_norm, existing_keys) if n}
+    existing_norm = [n for n in existing_norm if n]
+    new_norm = [_kw_norm(k) for k in updated_keywords]
+
+    # Embed (cached by utils.py embedding cache)
+    emb_existing = embed_texts_ollama(existing_norm, embed_model=embed_model)
+    emb_new = embed_texts_ollama(new_norm, embed_model=embed_model)
+
+    # Build LSH index on existing embeddings
+    dim = len(emb_existing[0]) if emb_existing and emb_existing[0] else 0
+    if dim <= 0:
+        return updated_keywords, doc_index
+    seed = int(hashlib.sha256(embed_model.encode("utf-8")).hexdigest()[:8], 16)
+    planes = _make_lsh_planes(dim, lsh_bits, seed)
+    buckets: dict[int, list[int]] = {}
+    for i, v in enumerate(emb_existing):
+        sig = _lsh_signature(v, planes)
+        buckets.setdefault(sig, []).append(i)
+
+    # For each new kw, scan its bucket (bounded) and merge if close enough.
+    for i, (kw_raw, kw_n, v) in enumerate(zip(updated_keywords, new_norm, emb_new)):
+        if not kw_n:
+            continue
+        # Exact normalized match first
+        if kw_n in existing_map:
+            updated_keywords[i] = existing_map[kw_n]
+            continue
+        sig = _lsh_signature(v, planes)
+        cand_idx = buckets.get(sig, [])
+        if max_bucket_scan > 0 and len(cand_idx) > max_bucket_scan:
+            cand_idx = cand_idx[:max_bucket_scan]
+        best_j = None
+        best_sim = -1.0
+        for j in cand_idx:
+            sim = cosine_sim(v, emb_existing[j])
+            if sim > best_sim:
+                best_sim = sim
+                best_j = j
+        if best_j is not None and best_sim >= threshold:
+            updated_keywords[i] = existing_keys[best_j]
+        else:
+            updated_keywords[i] = kw_raw
+
+    return updated_keywords, doc_index
+
+
+def merge_keywords(keywords, doc_index, *, model=None, opt=None):
+    method = getattr(opt, "keyword_merge_method", None) or "llm"
+    method = str(method).strip().lower()
+    if method == "embed":
+        return merge_keywords_embed_ann(keywords, doc_index, opt=opt)
+    return merge_keywords_llm(keywords, doc_index, model=model)
+
+
 def process_document(
     pdf_path,
     output_dir,
@@ -137,7 +241,7 @@ def process_document(
     """
     pageindex_ai_mode = opt.ai_mode
     if pageindex_ai_mode is not None:
-        os.environ["PAGEINDEX_AI_MODE"] = "1" if pageindex_ai_mode else "0"
+        os.environ["PAGEINDEX_AI_MODE"] = "1" if pageindex_ai_mode == 'llm' else "0"
     step_timings: List[Dict[str, Any]] = []
     doc_index = defaultdict(set)
     t_process = time.perf_counter()
@@ -195,7 +299,7 @@ def process_document(
             print("Step 13: Merging keywords into DocIndex...")
             t0 = time.perf_counter()
             merged_keywords, doc_index = merge_keywords(
-                keywords, doc_index, model=opt.model
+                keywords, doc_index, model=opt.model, opt=opt
             )
             for kw in merged_keywords:
                 doc_index[kw].add(output_file)
@@ -266,8 +370,8 @@ if __name__ == "__main__":
         "--pageindex-ai-mode",
         dest="pageindex_ai_mode",
         choices=["llm", "rule", "auto"],
-        type=int,
-        default=0,
+        type=str,
+        default="rule",
         help="Control PAGEINDEX_AI_MODE for this run: llm=1, rule=0, auto=leave env unchanged",
     )
     parser.add_argument(
@@ -292,6 +396,20 @@ if __name__ == "__main__":
         default='mmr',
         help="Document abstract backend (opt.abstract_method); omit to use config / env",
     )
+    parser.add_argument(
+        "--keyword-method",
+        dest="keyword_method",
+        choices=["llm", "rich", "embed_mmr"],
+        default="embed_mmr",
+        help="Keyword generation backend (opt.keyword_method). If omitted: llm when abstract is llm, else rich.",
+    )
+    parser.add_argument(
+        "--keyword-merge-method",
+        dest="keyword_merge_method",
+        choices=["llm", "embed"],
+        default="embed",
+        help="DocIndex keyword merge backend (llm=slow, embed=scalable ANN over embeddings).",
+    )
     args = parser.parse_args()
     
     output_dir = './results'
@@ -302,6 +420,20 @@ if __name__ == "__main__":
         raise ValueError("Either --pdf_path or --md_path must be specified")
     if args.pdf_path and args.md_path:
         raise ValueError("Only one of --pdf_path or --md_path can be specified")
+
+    if args.pageindex_ai_mode == 'llm':
+        summary_method = 'llm'
+        parent_summary_method = 'llm'
+        abstract_method = 'llm'
+        keyword_method = 'llm'
+        keyword_merge_method = 'llm'
+    else:
+        summary_method = args.summary_method
+        parent_summary_method = args.parent_summary_method
+        abstract_method = args.abstract_method
+        keyword_method = args.keyword_method
+        keyword_merge_method = args.keyword_merge_method
+    
     
     if args.pdf_path:
         
@@ -324,9 +456,11 @@ if __name__ == "__main__":
             if_add_doc_description=args.if_add_doc_description,
             if_add_doc_abstract=args.if_add_doc_abstract,
             if_add_node_text=args.if_add_node_text,
-            summary_method= args.summary_method,
-            parent_summary_method= args.parent_summary_method,
-            abstract_method= args.abstract_method,
+            summary_method= summary_method,
+            parent_summary_method= parent_summary_method,
+            abstract_method= abstract_method,
+            keyword_method= keyword_method,
+            keyword_merge_method=args.keyword_merge_method,
             ai_mode= args.pageindex_ai_mode
         )
      

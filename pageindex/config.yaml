@@ -18,6 +18,19 @@ summary_method: "llm"
 parent_summary_method: "llm"
 # Document-level abstract: llm (ChatGPT_API) or mmr (pool node summaries → embed → MMR)
 abstract_method: "llm"
+# Keyword generation:
+# - llm: generate keywords from doc_abstract text
+# - rich: generate keywords from title + section titles + representative snippets
+# - embed_mmr: LLM-free (headers + n-grams) → embed (Ollama) → MMR → top-k
+keyword_method: "llm"
+
+# Keyword merging into global DocIndex (run_pageindex.py)
+# - llm: expensive, compares new keywords to all existing using ChatGPT_API
+# - embed: scalable, approximate nearest neighbor over keyword embeddings
+keyword_merge_method: "embed"
+keyword_merge_embed_threshold: 0.88
+keyword_merge_embed_lsh_bits: 18
+keyword_merge_embed_max_bucket_scan: 64
 
 # MMR summarizer parameters
 mmr_top_k: 8
@@ -25,9 +38,19 @@ mmr_lambda: 0.5
 mmr_max_candidates: 64
 mmr_chunk_max_tokens: 50
 mmr_chunk_sentence_overlap: 1
-# Near-duplicate merge before MMR (difflib string similarity; longest snippet kept)
-mmr_near_dup_merge: "yes"
 mmr_near_dup_ratio: 0.92
+
+# Rich keyword context limits
+keywords_rich_max_headers: 40
+keywords_rich_max_snippets: 40
+keywords_rich_snippet_max_chars: 400
+
+# Embed+MMR keyword parameters (keyword_method=embed_mmr)
+keywords_embed_top_k: 10
+keywords_embed_lambda: 0.5
+keywords_embed_max_candidates: 500
+keywords_embed_ngram_max_n: 3
+keywords_embed_min_df: 2
 
 # Ollama embeddings (OpenAI-compatible /v1/embeddings)
 ollama_embed_model: "mxbai-embed-large"

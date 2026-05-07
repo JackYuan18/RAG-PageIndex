@@ -1,0 +1,44 @@
+{
+  "test_datetime": "2026-04-14 11:46:31",
+  "doc": "/home/zyuan/NSTSCE_Bot/PageIndex/Database/AAA NSTSCE Training Drivers on L2 Systems.pdf",
+  "success": true,
+  "total_seconds": 11.065,
+  "step_timings": [
+    {
+      "step": "Step 1: Parsing PDF",
+      "seconds": 0.43
+    },
+    {
+      "step": "Step 2: Extracting title and authors",
+      "seconds": 0.001
+    },
+    {
+      "step": "Step 3: Building tree structure",
+      "seconds": 0.085
+    },
+    {
+      "step": "Step 4: Adding node ids",
+      "seconds": 0.0
+    },
+    {
+      "step": "Step 5: Adding node text",
+      "seconds": 0.0
+    },
+    {
+      "step": "Step 6: Generating node summaries",
+      "seconds": 0.293
+    },
+    {
+      "step": "Step 7: Generating parent node summaries",
+      "seconds": 0.275
+    },
+    {
+      "step": "Step 8: Generating document abstract",
+      "seconds": 3.867
+    },
+    {
+      "step": "Step 9: Generating keywords",
+      "seconds": 6.113
+    }
+  ]
+}

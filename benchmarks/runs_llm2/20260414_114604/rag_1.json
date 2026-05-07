@@ -1,0 +1,52 @@
+{
+  "query": "In vtti, who works on the challenges of L3 autonomous systems?",
+  "matched_documents": [
+    "./results/Communication-aware_Distributed_Gaussian_Process_Regression_Algorithms_for_Real-time_Machine_Learning_structure.json",
+    "./results/AAA NSTSCE Training Drivers on L2 Systems_structure.json",
+    "./results/Data-Driven_Characterization_of_Motorcycle_Riders_Kinematics_and_Crash_Risk_Final_structure.json",
+    "./results/NSTSCE_L3System_Final_structure.json",
+    "./results/NSTSCE_NewTechOutreach_Final_structure.json",
+    "./results/AVSC Best Practice for Developing ADS_structure.json",
+    "./results/J3045_202502_structure.json"
+  ],
+  "retrieved_contexts": [
+    {
+      "path": "./results/NSTSCE_L3System_Final_structure.json",
+      "context": "## Title: Preface\n\nText:  \n \n \n  \nStatus and Challenges of Level 3 \nAutomated Driving Systems  \n  Lesheng Hua  (PhD)   Jacobo Antona -Makoshi  (PhD)    \n Luke Neurauter  \nSubmitted:  August 12, 2025  \n Report # 25-UT-172  \n \n\n---\n\n## Title: ACKNOWLEDGMENTS\n\nText:  \n ACKNOWLEDGMENTS  \nThe authors of this report would like to acknowledge the support of the stakeholders of the \nNational Surface Transportation Safety Center for Excellence (NSTSCE): Zac Doerzaph from \nthe Virginia Tech Transportation Institute; John Capp and Yi Glaser from Ge neral Motors \nCorporation; Terri Hallquist and Jonathan Mueller from the Federal Motor Carrier Safety \nAdministration; Mike Fontaine from the Virginia Department of Transportation and the Virginia \nTransportation Research Council; and Melissa Miles and Elizab eth Pulver from State Farm \nInsurance.  \nThe NSTSCE stakeholders have jointly funded this research for the purpose of developing and \ndisseminating advanced transportation safety techniques and innovations. \n \n\n---\n\n## Title: CHAPTER 1. BACKGROUND AND AIMS\n\nText: 1 CHAPTER 1.  BACKGROUND AND AIMS  \nSAE Level ( L2) systems are currently  offered by most vehicle manufacturers worldwide —global \nsales reached 11.2 million vehicles equipped with these systems in 2020 and have continued to \ngrow (Canalys, 2021; Pangarkar, 2025). L2 systems  initially offered  simultaneous steering and \nacceleration/braking support while requiring full driver supervision and  constant driver attention . \nThese systems first  targeted highway driving environments, incorporating features such as lane \ncentering and adaptive cruise control . By 2023, L2 systems had  evolved to s upport  hands -off \ndriving under certain conditions  and were broa dly deployed  across major OEMs —including \nAudi (Traffic Jam Assist), BMW (Highway Assistant), Ford (BlueCruise), General Motors  \n(Super Cruise), Hyundai (Autonomous Driving Package), and Tesla (Autopilot ). Global sales of \nvehicles equipped with this advanced type of L2 system s reached approximately 2 million units \nin 2023, with projections to double to 4.5 million units by 2024 ( Liu & Low , 2023), reflecting a \nclear and accelerating push toward higher levels of driving automation. \nAt the higher end of the driving automation spectrum, both U.S. and Chinese companies have \nemerged as frontrunners in the development and deployment of Level 4 ( L4) systems. S ince the \nearly  2000s i n the U.S. , major tech nology and automotive firms  such as  Google (Waymo), Uber, \nApple, Zoox, and the now -defunct Argo AI and Cruise , spearheaded efforts to develop L4 \nsystems and to launch  driverless ride -hailing  services. This innovation push was enabled  by over \n20 states allowing the testing of L4 systems  on public roads (Othman, 2021). A major milestone \noccurred in July 2023 when San Francisco authorities authorized large -scale driverless \noperations by Cruise and Waymo. However, Cruise soon faced public backlash following incidents involving crashes with an emergency vehicle and a pedestrian ( ABC7 News Bay Area, \n2023; Golson, 2023), leading to the revocation of its permit in October 2023 ( Washington Post, \n2023). This setback severely impacted Cruise’s position, while Waymo strengthened its lead in the U.S. robotaxi market ( Tim, 2023) . Meanwhile, China has made comparable strides. Baidu’s \nApollo Go became the first service approved to offer fully driverless, paid robotaxi rides in Wuhan and Chongqing in 2022 (PR Newswire, 2024) and later expanded to Shenzhen in 2023 with a commercial license covering 188 square kilometers ( PR Newswire , 2023). By early 2025, \nApollo Go had transitioned to fully autonomous services in several urban areas, accumulating over 130 million kilometers of driverless operation (Technology Magazine, 2025). Today, robotaxi fleets without human drivers are actively operating in both the U.S. and China, led by services such as Waymo and Apollo Go . \nWhile traditional automotive manufacturers have been driving the widespread deployment of L2 systems, technology companies have led the development and deployment of L4 services. Amidst these parallel advances, significant developments have also occurred i n Level 3 ( L3) \nconditional driving automation systems. L3  systems can fully drive the vehicle under limited and \ndefined conditions, and  the driver must be ready to take back control of  the system whenever \nrequested . The first -ever United Nations regulation  for L3 low -speed Automated Lane Keeping \nSystems (ALKS) was adop ted in 2020 (UNECE, 2021) and was later modified to increase speeds \nand incorporate lane change  capabilities  (UNECE, 2022) . Following the se regulatory milestone s, \nHonda launched the world’ s first commercially available L3 system, “ Honda Sensing Elite,”  in \nJapan in 2021 ( Beresford , 2021) . Mercedes -Benz subsequently launched  its L3 Drive Pilot \nsystem in Germany in 2022 ( Mercedes -Benz Group, n.d.) , followed by BMW , which introduced \nits own L3 system  in the German  market  in 2024 ( BMW Group, 2023) . As of April 2025, 2 Mercedes -Benz remains the only company offering an L3 system in the U.S.  that legally allows \ndrivers to take their eyes off the road under specific conditions, with approvals limited to \nCalifornia and Nevada. Currently, L3  Drive Pilot is available exclusively on the S -Class and \nEQS models and operates only under defined conditions such as heavy highway traffic at speeds up to 40 mph. Despite  uncertainties about market readiness and potentially unresolved safety \nchallenges , vehicle manufacturers are poised t o make critical advancements in L3 technology \nover the next decade, with broader deployment and enhanced system capabilities anticipated . \nL3 systems are expected to  provide safety improvements by reducing driver errors  and \nminimizing  crash risk s, as well as other  benefits like  enhancing  convenience , comfort , and \nefficiency . However , their  deployment is not only dependent  on technological capability but  also \na matter of public confidence in A utomated Driving S ystems  (ADS; A utocrypt , 2023) . Currently, \nlittle is known about the real -world safety performance of L3 systems  or their role s in collisions.  \nFailure or low performance of systems can undermine public trust and confidence.  The Dutch \nSafety Board (2019)  identif ied several persistent issues in L3 system s: human factor problems \n(driver overestimation, misunderstanding, and misuse ); systems activated in situations that they \ncannot cope with;  a lack of transparency regarding the design, capabilities , and effectiveness o f \nthese systems;  questions about  regulatory oversight ; over -the-air update functionalit y; and the \nadequacy of driver training. The Insurance Institute for Highway Safety ( IIHS , 2019)  highlighted \nthe issue  of drivers  misinterpreting  system messages, particularly  when the messages are unclear \nor misleading . System developers and regulators  must  collaboratively address these human -\ncentered challenges and  enhance  the design, implementation, and oversight  of L3  system s to \nensure safe and reliable user interaction . \nThe aim of this report is t o provide a comprehensive assessment of the status and complexities of \nL3 systems at the global  level . To accomplish this , we compile d information from various \npublicly available sources , summarizing the international regulations, market  offerings , and \npublic acceptance of L3 systems  (Chapter 2). Following this overview, we conducted a deep \nreview of  critical  research issues, including safety challenges, system design, human factors, \ndriver interactions  with the systems , and areas  with room for system safety improvement  \n(Chapter 3).  A discussion of these findings is provided in Chapter 4, followed by a set of final \nrecommendations  for L3 researchers, developers , and regulators  in Chapter 5. The scope of the \nreport focuses primarily on light motor vehicles and L3 systems , though references  to other \nautomation levels and vehicle types are included where relevant.  ",
+      "doc_path": "/home/zyuan/NSTSCE_Bot/PageIndex/Database/NSTSCE_L3System_Final.pdf"
+    }
+  ],
+  "answer": "## Team Members\n\nIn VTTI, Lesheng Hua, Jacobo Antona-Makoshi, and Luke Neurauter work on the challenges of L3 autonomous systems. [Source: NSTSCE_L3System_Final.pdf]",
+  "sources": [
+    {
+      "name": "NSTSCE_L3System_Final.pdf",
+      "url": "/docs/NSTSCE_L3System_Final.pdf"
+    }
+  ],
+  "step_timings": [
+    {
+      "step": "Step 1: Matching query to keywords in DocIndex",
+      "seconds": 2.073
+    },
+    {
+      "step": "Step 2: Loading document structures",
+      "seconds": 0.002
+    },
+    {
+      "step": "Step 3: Performing reasoning-based tree search",
+      "seconds": 29.162
+    },
+    {
+      "step": "Step 4: Extracting context from retrieved nodes",
+      "seconds": 0.0
+    },
+    {
+      "step": "Step 5: Generating per-document answers",
+      "seconds": 0.978
+    },
+    {
+      "step": "Step 6: Combining answers",
+      "seconds": 0.695
+    }
+  ]
+}

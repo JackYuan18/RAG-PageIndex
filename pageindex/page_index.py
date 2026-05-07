@@ -2199,7 +2199,13 @@ def page_index_main(doc, opt=None, step_timings: Optional[List[Dict[str, Any]]] 
 
         print("Step 9: Generating keywords...")
         t0 = time.perf_counter()
-        keywords = generate_keywords(doc_abstract, model=opt.model)
+        keywords, keywords_list, keywords_payload = generate_doc_keywords(
+            structure,
+            doc_abstract,
+            doc_title=doc_title_authors.get("title"),
+            model=opt.model,
+            opt=opt,
+        )
         _record_step_time(step_timings, "Step 9: Generating keywords", t0)
 
         return {
@@ -2208,6 +2214,8 @@ def page_index_main(doc, opt=None, step_timings: Optional[List[Dict[str, Any]]] 
                 'doc_title': doc_title_authors.get('title'),
                 'doc_authors': doc_title_authors.get('authors'),
                 'keywords': keywords,
+                'keywords_list': keywords_list,
+                'keywords_payload': keywords_payload,
                 # 'doc_description': doc_description,
                 'doc_abstract': doc_abstract,
                 'doc_abstract_payload': doc_abstract_payload,

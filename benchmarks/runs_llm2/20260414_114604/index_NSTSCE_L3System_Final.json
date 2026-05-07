@@ -1,0 +1,44 @@
+{
+  "test_datetime": "2026-04-14 11:48:10",
+  "doc": "/home/zyuan/NSTSCE_Bot/PageIndex/Database/NSTSCE_L3System_Final.pdf",
+  "success": true,
+  "total_seconds": 125.56,
+  "step_timings": [
+    {
+      "step": "Step 1: Parsing PDF",
+      "seconds": 0.456
+    },
+    {
+      "step": "Step 2: Extracting title and authors",
+      "seconds": 1.365
+    },
+    {
+      "step": "Step 3: Building tree structure",
+      "seconds": 52.74
+    },
+    {
+      "step": "Step 4: Adding node ids",
+      "seconds": 0.0
+    },
+    {
+      "step": "Step 5: Adding node text",
+      "seconds": 0.0
+    },
+    {
+      "step": "Step 6: Generating node summaries",
+      "seconds": 34.366
+    },
+    {
+      "step": "Step 7: Generating parent node summaries",
+      "seconds": 5.761
+    },
+    {
+      "step": "Step 8: Generating document abstract",
+      "seconds": 5.688
+    },
+    {
+      "step": "Step 9: Generating keywords",
+      "seconds": 25.181
+    }
+  ]
+}
