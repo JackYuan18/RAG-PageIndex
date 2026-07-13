@@ -1245,7 +1245,15 @@ async def generate_node_summary(node, model=None):
         return response
 
 async def generate_parent_node_summary(node, model=None):
-    
+    children = (node or {}).get("nodes") or []
+    child_summaries = [
+        str(ch.get("summary")).strip()
+        for ch in children
+        if isinstance(ch, dict) and isinstance(ch.get("summary"), str) and str(ch.get("summary")).strip()
+    ]
+    if not child_summaries:
+        return ""
+
     prompt = {}
     prompt['system_prompt'] = f"""
     You are an expert in generating summaries for documents.
@@ -1253,7 +1261,7 @@ async def generate_parent_node_summary(node, model=None):
     Your task is to generate a summary of the parent node of the partial document about what are main points covered in the children nodes using the summaries of the children nodes.
     """
     prompt['user_prompt'] = f"""
-    Partial Document Text: {' '.join([node['summary'] for node in node['nodes']])}
+    Partial Document Text: {' '.join(child_summaries)}
     
     Directly return the summary, do not include any other text.
     """

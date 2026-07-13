@@ -329,7 +329,7 @@ if __name__ == "__main__":
     # Set up argument parser
     parser = argparse.ArgumentParser(description='Process PDF or Markdown document and generate structure')
     # parser.add_argument('--pdf_path', type=str, default = '/home/zyuan/NSTSCE_Bot/NSTSCE/Database/Communication-aware_Distributed_Gaussian_Process_Regression_Algorithms_for_Real-time_Machine_Learning.pdf', help='Path to the PDF file')
-    parser.add_argument('--pdf_path', type=str, default = '/home/zyuan/NSTSCE_Bot/PageIndex/Database/Data-Driven_Characterization_of_Motorcycle_Riders_Kinematics_and_Crash_Risk_Final.pdf', help='Path to the PDF file')
+    parser.add_argument('--pdf_path', type=str, default = '/home/zyuan/NSTSCE_Bot/PageIndex/Database/NSTSCE_DrowsinessMetricsThresholds_Final.pdf', help='Path to the PDF file')
     parser.add_argument('--md_path', type=str, help='Path to the Markdown file')
 
     # parser.add_argument('--model', type=str, default='gpt-5.1', help='Model to use')
@@ -386,7 +386,7 @@ if __name__ == "__main__":
         "--parent-summary-method",
         dest="parent_summary_method",
         choices=["llm", "mmr"],
-        default='mmr',
+        default='llm',
         help="Parent node summarization backend (opt.parent_summary_method); omit to use config / env",
     )
     parser.add_argument(

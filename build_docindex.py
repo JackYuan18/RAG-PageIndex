@@ -55,35 +55,41 @@ if __name__ == "__main__":
     parser.add_argument('--output-dir', type=str, default='./results',
                       help='Output directory for structure files and DocIndex')
     
-    parser.add_argument('--pageindex-ai-mode', type=bool, default=False,
-                      help='PageIndex AI mode: True for LLM, False for rule')
+    parser.add_argument(
+        "--pageindex-ai-mode",
+        dest="pageindex_ai_mode",
+        choices=["llm", "rule", "auto"],
+        type=str,
+        default="rule",
+        help="Control PAGEINDEX_AI_MODE for this run: llm=1, rule=0, auto=leave env unchanged",
+    )
     parser.add_argument(
         '--node-summary-method',
         '--summary-method',
         dest='summary_method',
         choices=['llm', 'mmr'],
-        default=None,
+        default='mmr',
         help='Leaf node summarization backend (opt.summary_method); omit to use config / env',
     )
     parser.add_argument(
         '--parent-summary-method',
         dest='parent_summary_method',
         choices=['llm', 'mmr'],
-        default=None,
+        default='mmr',
         help='Parent node summarization backend (opt.parent_summary_method); omit to use config / env',
     )
     parser.add_argument(
         '--abstract-method',
         dest='abstract_method',
         choices=['llm', 'mmr'],
-        default=None,
+        default='mmr',
         help='Document abstract backend (opt.abstract_method); omit to use config / env',
     )
     parser.add_argument(
         '--keyword-method',
         dest='keyword_method',
         choices=['llm', 'rich', 'embed_mmr'],
-        default=None,
+        default="embed_mmr",
         help='Keyword generation backend (opt.keyword_method); omit to use config / env',
     )
     args = parser.parse_args()
@@ -138,12 +144,12 @@ if __name__ == "__main__":
         # Default to rule-based PageIndex internals (PAGEINDEX_AI_MODE=0).
         # If it fails, fall back to LLM mode (PAGEINDEX_AI_MODE=1) once.
         success, doc_index, _step_timings, _total_seconds = process_document(
-            pdf_path, output_dir, opt, update_docindex=True, pageindex_ai_mode=args.pageindex_ai_mode
+            pdf_path, output_dir, opt, update_docindex=True
         )
         if not success and args.pageindex_ai_mode == False:
             print("Rule-based mode failed; retrying with LLM mode...")
             success, doc_index, _step_timings, _total_seconds = process_document(
-                pdf_path, output_dir, opt, update_docindex=True, pageindex_ai_mode=True
+                pdf_path, output_dir, opt, update_docindex=True
             )
         if success:
             pdf_success += 1
