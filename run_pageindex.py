@@ -386,7 +386,7 @@ if __name__ == "__main__":
         "--parent-summary-method",
         dest="parent_summary_method",
         choices=["llm", "mmr"],
-        default='llm',
+        default='mmr',
         help="Parent node summarization backend (opt.parent_summary_method); omit to use config / env",
     )
     parser.add_argument(
