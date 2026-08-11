@@ -4,6 +4,18 @@ Reasoning-based, vectorless document indexing and retrieval for structured PDFs.
 
 **New to the project?** Read [What this system does](#what-this-system-does), then [New maintainer setup](#new-maintainer-setup) (minimum steps), then [Quick start](#quick-start) for detail.
 
+### Handoff package
+
+| Artifact | Purpose |
+|----------|---------|
+| [README.md](README.md) | Main setup, architecture, reference |
+| [docs/PageIndex_Handoff.pptx](docs/PageIndex_Handoff.pptx) | Slide deck for handoff meeting |
+| [RAG-Interface/README.md](RAG-Interface/README.md) | Chat UI (multi-turn, port 5001) |
+| [DocIndex-Interface/README.md](DocIndex-Interface/README.md) | Document manager (upload/index/remove, port 5002) |
+| [.env.example](.env.example) | Secrets template |
+| [llm_models.yaml](llm_models.yaml) | Model aliases and defaults |
+| `python scripts/generate_handoff_ppt.py` | Regenerate the PowerPoint deck |
+
 ---
 
 ## What this system does
@@ -97,8 +109,8 @@ PageIndex/
 | **`build_docindex.py`** | Batch driver: loops over `Database/*.pdf`, calls `process_document()`, updates `DocIndex.json`. |
 | **`run_pageindex.py`** | Single-document driver: wraps `page_index_main`, saves structure JSON, optional DocIndex merge. |
 | **`RAG/`** | RAG query stack. `rag_query.py` orchestrates the 6-step pipeline; `utils.py` has keyword match, tree search, context extraction, and answer prompts. Also contains `example.html` (flow diagram) and `Untitled1.ipynb` (experimental notebook). |
-| **`RAG-Interface/`** | Flask app for the **VTTI AI Chatbot** UI. `app.py` exposes `/api/query` (SSE progress stream) and `/api/status`. `templates/chatbot.html` tracks in-browser conversation history and sends prior turns with each request. Default port **5001**. |
-| **`DocIndex-Interface/`** | Flask app to **manage the document collection**: list PDFs in `Database/`, trigger per-file or full re-index jobs, inspect DocIndex stats. Add PDFs by copying files into `Database/` (no in-browser upload). Default port **5002**. |
+| **`RAG-Interface/`** | Flask app for the **VTTI AI Chatbot** UI. `app.py` exposes `/api/query` (SSE progress stream) and `/api/status`. `templates/chatbot.html` tracks in-browser conversation history and sends prior turns with each request. Default port **5001**. See [RAG-Interface/README.md](RAG-Interface/README.md). |
+| **`DocIndex-Interface/`** | Flask app to **manage the document collection**: upload PDFs, index or re-index, remove documents (updates `Database/`, structure JSON, and `DocIndex.json`). Default port **5002**. See [DocIndex-Interface/README.md](DocIndex-Interface/README.md). |
 
 #### Evaluation, benchmarks & docs
 
@@ -106,7 +118,8 @@ PageIndex/
 |--------|-------------|
 | **`benchmarks/`** | Performance harness. `run_benchmarks.py` runs indexing + RAG on fixed PDFs/queries and writes timing JSON under `benchmarks/runs/<timestamp>/`. Subfolders like `runs_rule/`, `runs_llm/` are **historical benchmark outputs** — not used at runtime. See also `docs/perf.md`. |
 | **`eval/`** | **RAGAS evaluation** of answer quality. `ragas_eval.py` runs labeled Q&A against `eval/datasets/*.jsonl` and writes scores to `eval/runs/<timestamp>/`. See `eval/README.md`. |
-| **`docs/`** | Internal documentation: `perf.md` (benchmarking notes) and `PageIndex_Handoff.pptx` (handoff slide deck; regenerate with `python scripts/generate_handoff_ppt.py`). |
+| **`docs/`** | Internal documentation: `perf.md` (benchmarking notes), `PageIndex_Handoff.pptx` (handoff slide deck; regenerate with `python scripts/generate_handoff_ppt.py`). |
+| **`scripts/`** | Utility scripts (e.g. `generate_handoff_ppt.py` to rebuild the handoff PowerPoint). |
 | **`cookbook/`** | **Upstream PageIndex notebooks** (not required for NSTSCE deployment): vectorless RAG walkthrough, vision RAG, agentic retrieval, PageIndex Chat API quickstart. See `cookbook/README.md`. |
 | **`tutorials/`** | **Upstream concept guides** from PageIndex: how tree search works (`tutorials/tree-search/`), multi-document search strategies (`tutorials/doc-search/` — metadata, semantics, description). Reference material, not executed by this repo's scripts. |
 
@@ -163,6 +176,7 @@ Minimum steps to run on a fresh machine (current default: **hybrid** — Ollama 
 3. **Ollama:** `ollama serve`, then `ollama pull mxbai-embed-large` and `ollama pull qwen2.5:7b`
 4. **Index:** put PDFs in `Database/`, then `python build_docindex.py` from project root
 5. **Query:** `python RAG/rag_query.py --query "…"` or `python RAG-Interface/app.py`
+6. **Manage docs (optional):** `python DocIndex-Interface/app.py` → http://localhost:5002
 
 For a **fully local** setup (no OpenAI), change all models in `llm_models.yaml` to Ollama aliases (e.g. `qwen7`) — see [Quick start](#quick-start).
 
@@ -285,6 +299,8 @@ The chat UI requires `results/DocIndex.json`. It streams progress for each RAG s
 - [ ] `results/DocIndex.json` exists
 - [ ] `python RAG/rag_query.py --query "test"` returns an answer (or a clear error)
 - [ ] RAG chat UI: ask a follow-up question that references the previous answer
+- [ ] DocIndex manager: upload a PDF, index it, then remove it (smoke test)
+- [ ] `docs/PageIndex_Handoff.pptx` reviewed (or regenerate with `python scripts/generate_handoff_ppt.py`)
 
 ---
 
@@ -292,12 +308,16 @@ The chat UI requires `results/DocIndex.json`. It streams progress for each RAG s
 
 ### Add a new PDF to the collection
 
-1. Copy the PDF into `Database/`.
-2. Re-index (from project root):
-   - **Batch:** `python build_docindex.py`
-   - **Single file:** `python run_pageindex.py --pdf_path Database/new.pdf --update_docindex`
-   - **Web UI:** `python DocIndex-Interface/app.py` → http://localhost:5002
+1. **Upload** in the DocIndex manager (http://localhost:5002) **or** copy the PDF into `Database/`.
+2. Index the document:
+   - **Web UI:** click **Add Structure to DocIndex** on the row (PDF only)
+   - **Batch CLI:** `python build_docindex.py` (re-indexes all PDFs)
+   - **Single CLI:** `python run_pageindex.py --pdf_path Database/new.pdf --update_docindex`
 3. Confirm `results/DocIndex.json` was updated.
+
+### Remove a PDF from the collection
+
+Use the DocIndex manager (**Remove** on a row) or manually delete the PDF, `results/<stem>_structure.json`, and prune keyword entries from `DocIndex.json`. The web UI handles all three steps automatically. See [DocIndex-Interface/README.md](DocIndex-Interface/README.md#remove-a-document).
 
 ### Re-index after changing indexing settings
 
@@ -444,7 +464,15 @@ History is used in:
 | Interface | Command (from project root) | URL | Purpose |
 |-----------|----------------------------|-----|---------|
 | **RAG chat** | `python RAG-Interface/app.py` | http://localhost:5001 | Multi-turn Q&A over indexed docs (session history in browser) |
-| **DocIndex manager** | `python DocIndex-Interface/app.py` | http://localhost:5002 | List PDFs, trigger re-index jobs |
+| **DocIndex manager** | `python DocIndex-Interface/app.py` | http://localhost:5002 | Upload, index, re-index, and remove documents |
+
+Both apps can also be started from their own folders (`python app.py`). **Restart Flask apps after pulling code changes** so new API routes load.
+
+| Doc | Description |
+|-----|-------------|
+| [RAG-Interface/README.md](RAG-Interface/README.md) | Chat UI setup, conversation history, API |
+| [DocIndex-Interface/README.md](DocIndex-Interface/README.md) | Document manager: upload, index, remove |
+| [docs/PageIndex_Handoff.pptx](docs/PageIndex_Handoff.pptx) | Handoff slide deck |
 
 Environment variables:
 
@@ -452,6 +480,7 @@ Environment variables:
 |----------|---------|-------------|
 | `FLASK_PORT` | `5001` | RAG interface port |
 | `DOCINDEX_FLASK_PORT` | `5002` | DocIndex interface port |
+| `DOCINDEX_MAX_UPLOAD_MB` | `100` | Max upload size per file in DocIndex manager |
 | `FLASK_HOST` | `0.0.0.0` | Bind address |
 | `FLASK_OPEN_BROWSER` | off | Set to `1` to auto-open browser on start |
 
@@ -538,6 +567,8 @@ python eval/ragas_eval.py \
 | Empty `doc_authors` in structure JSON | Old index | Re-run indexing for that PDF |
 | RAG chat shows progress but no answer | LLM error | Check terminal running `app.py`; verify keys/models for `rag.*` in yaml |
 | Follow-up questions ignore prior context | Page refreshed or CLI used | History is web-UI only; refresh clears session; CLI is single-turn by default |
+| DocIndex API returns HTML 404 | Flask server not restarted after code update | Stop and restart `python DocIndex-Interface/app.py` |
+| Remove / upload buttons do nothing | Stale server process | Restart the DocIndex manager; hard-refresh browser |
 | Wrong `results/` or `cache/` location | Started app from wrong directory | Always `cd` to project root before running scripts |
 
 Indexing logs are written under `logs/` (JSON per run).

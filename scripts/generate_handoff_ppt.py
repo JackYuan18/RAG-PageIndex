@@ -240,22 +240,35 @@ def build() -> Path:
         prs,
         "Web Interfaces",
         [
-            "VTTI AI Chatbot",
+            "VTTI AI Chatbot (port 5001)",
             "python RAG-Interface/app.py",
-            "http://localhost:5001",
-            "Multi-turn Q&A with session history",
-            "Progress streaming + clickable source citations",
-            "Requires results/DocIndex.json",
+            "Multi-turn Q&A + session history",
+            "SSE progress + source citations",
+            "See RAG-Interface/README.md",
         ],
         [
-            "DocIndex Manager",
+            "DocIndex Manager (port 5002)",
             "python DocIndex-Interface/app.py",
-            "http://localhost:5002",
-            "List PDFs, trigger re-index jobs",
-            "Add PDFs by copying to Database/",
+            "Upload PDFs to Database/",
+            "Index, re-index, or remove documents",
+            "See DocIndex-Interface/README.md",
         ],
         "RAG Chat",
         "DocIndex Manager",
+    )
+
+    add_content_slide(
+        prs,
+        "DocIndex Manager — Document Lifecycle",
+        [
+            "Upload: drag-and-drop or file picker → saves to Database/",
+            "Add Structure: run_pageindex.py --update_docindex for one PDF",
+            "Update Structure: re-index after PDF or config changes",
+            "Remove: delete Database/ file + structure JSON + DocIndex keywords",
+            "Reconstruct: build_docindex.py over all PDFs in Database/",
+            "Restart server after code updates (Ctrl+C → python app.py)",
+        ],
+        subtitle="http://localhost:5002",
     )
 
     add_section_slide(prs, "Configuration")
@@ -307,12 +320,13 @@ def build() -> Path:
         prs,
         "Day-to-Day Operations",
         [
-            "Add PDF: copy to Database/ → python build_docindex.py (or single-file run_pageindex.py)",
-            "Re-index after config changes: re-run indexing for affected PDFs",
+            "Add PDF: upload in DocIndex UI or copy to Database/ → index",
+            "Remove PDF: Remove button in DocIndex UI (cleans all artifacts)",
+            "Re-index: Update Structure (one file) or DocIndex Reconstruction (all)",
             "Change answer model: edit rag.* in llm_models.yaml → restart chat UI",
-            "Customize answers: edit prompts in RAG/utils.py",
-            "  generate_answer_with_citations(), combine_answers(), tree_search()",
-            "Logs: logs/ (indexing)  |  terminal output (RAG UI)",
+            "Customize prompts: RAG/utils.py (answers, tree search, history helpers)",
+            "After git pull: restart Flask apps so new API routes load",
+            "Logs: logs/ (indexing) | terminal output (web UIs)",
         ],
     )
 
@@ -323,24 +337,24 @@ def build() -> Path:
             "No DocIndex found → run build_docindex.py from project root",
             "Ollama / embedding errors → ollama serve; pull mxbai-embed-large",
             "OpenAI errors → check CHATGPT_API_KEY for gpt* aliases",
+            "DocIndex API 404 / JSON parse error → restart Flask server",
             "No matching documents → re-index; lower keyword-match threshold",
-            "Wrong results/ cache path → always cd to project root first",
+            "Empty doc_authors → re-index PDF (author extraction improved)",
             "GPU driver mismatch → reboot after NVIDIA driver updates",
-            "Empty doc_authors → re-index PDF (author extraction was improved)",
         ],
     )
 
     add_content_slide(
         prs,
-        "Evaluation & Documentation",
+        "Documentation",
         [
             "README.md — full setup, reference, troubleshooting",
-            "docs/PageIndex_Handoff.pptx — handoff slide deck",
+            "RAG-Interface/README.md — chat UI + conversation history",
+            "DocIndex-Interface/README.md — upload, index, remove",
+            "docs/PageIndex_Handoff.pptx — this slide deck",
             ".env.example — secrets template",
-            "OLLAMA_SETUP.md — Ollama install guide",
-            "benchmarks/run_benchmarks.py — timing harness",
-            "eval/ragas_eval.py — answer quality (needs OPENAI_API_KEY for judge)",
-            "cookbook/, tutorials/ — upstream PageIndex reference material",
+            "scripts/generate_handoff_ppt.py — regenerate deck",
+            "benchmarks/ + eval/ — timing and RAGAS evaluation",
         ],
     )
 
@@ -349,13 +363,13 @@ def build() -> Path:
         "Handoff Checklist",
         [
             "☐ Repo access transferred",
-            "☐ Python 3.12 environment + requirements installed",
-            "☐ .env configured (CHATGPT_API_KEY, Ollama URL)",
-            "☐ Ollama running with mxbai-embed-large + qwen2.5:7b",
-            "☐ Database/ PDFs present; build_docindex.py completed",
-            "☐ results/DocIndex.json exists",
-            "☐ RAG chat smoke test passed (including a follow-up question)",
-            "☐ README.md reviewed by new maintainer",
+            "☐ Python 3.12 + pip install -r requirements.txt",
+            "☐ .env from .env.example; CHATGPT_API_KEY set if using gpt51",
+            "☐ Ollama running; mxbai-embed-large + qwen2.5:7b pulled",
+            "☐ build_docindex.py completed; results/DocIndex.json exists",
+            "☐ RAG chat: question + follow-up smoke test (port 5001)",
+            "☐ DocIndex manager: upload, index, remove smoke test (port 5002)",
+            "☐ README.md + handoff PPT reviewed by new maintainer",
         ],
     )
 

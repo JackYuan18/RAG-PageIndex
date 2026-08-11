@@ -1,161 +1,148 @@
-# PageIndex RAG Web Chatbot Interface
+# VTTI AI Chatbot — RAG Web UI
 
-A web-based chatbot interface for querying documents using the PageIndex RAG system.
+Flask web interface for querying indexed documents using the PageIndex RAG pipeline. Supports **multi-turn conversation** — follow-up questions use prior Q&A from the current browser session.
+
+For managing documents (upload, index, remove), use the [DocIndex manager](../DocIndex-Interface/) on port **5002**. See the [project README](../README.md) for the full pipeline.
+
+---
 
 ## Features
 
-- 🎨 Modern, responsive web interface
-- 💬 Real-time chat interface
-- 📚 Query documents indexed by PageIndex
-- 🔍 Shows matched documents and retrieved nodes
-- ⚡ Fast and efficient document retrieval
+- Multi-turn chat with in-browser conversation history (up to 20 turns)
+- Server-Sent Events (SSE) progress stream for each RAG step
+- Clickable `[Source: file.pdf]` citations
+- Per-step timing in the response footer
+- DocIndex keyword warm-up on startup (faster first query)
 
-## Installation
+---
 
-Make sure you have Flask installed:
+## Prerequisites
+
+| Requirement | Notes |
+|-------------|-------|
+| Indexed corpus | `results/DocIndex.json` must exist — run `build_docindex.py` or use the DocIndex manager |
+| Models / keys | Configured via `llm_models.yaml` and `.env` (see main README) |
+| Ollama | Required for keyword embeddings even when RAG chat uses OpenAI |
+
+---
+
+## Quick start
+
+From the **project root**:
 
 ```bash
-pip install flask
+python RAG-Interface/app.py
+# Open http://localhost:5001
 ```
 
-Or install all requirements from the project root:
+Or from this directory:
 
 ```bash
-pip install -r requirements.txt
-```
-
-## Usage
-
-### 1. Generate DocIndex First
-
-Before using the chatbot, make sure you have generated document structures and DocIndex:
-
-```bash
-python run_pageindex.py --pdf_path path/to/document.pdf
-```
-
-### 2. Start the Web Server
-
-From the project root:
-
-```bash
-python Interface/app.py
-```
-
-Or from the Interface directory:
-
-```bash
-cd Interface
+cd RAG-Interface
 python app.py
 ```
 
-### 3. Open in Browser
+Models are read from `llm_models.yaml` (`rag.chat_model`, `rag.tree_search_model`) — not from a UI dropdown. Restart the app after changing `llm_models.yaml`.
 
-Open your web browser and navigate to:
+---
 
+## Conversation history
+
+Each `POST /api/query` sends the current question plus prior turns:
+
+```json
+{
+  "query": "What sensors does it use?",
+  "history": [
+    {"role": "user", "content": "What is ADAS?"},
+    {"role": "assistant", "content": "ADAS is …"}
+  ]
+}
 ```
-http://localhost:5000
-```
+
+History is **browser-session only** — refreshing the page clears it. The CLI (`RAG/rag_query.py`) is single-turn unless you pass `conversation_history` programmatically.
+
+---
 
 ## Configuration
 
-The chatbot uses the same environment variables as the RAG system:
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `FLASK_PORT` | `5001` | HTTP port |
+| `FLASK_HOST` | `0.0.0.0` | Bind address |
+| `FLASK_OPEN_BROWSER` | off | Set to `1` to auto-open browser on start |
 
-- `API_PROVIDER`: Set to "ollama", "openai", or "huggingface" (default: "ollama")
-- `OLLAMA_MODEL`: Model name for Ollama (default: "llama3.1:8b")
-- `CHATGPT_API_KEY`: OpenAI API key (if using OpenAI)
-- `HF_TOKEN`: HuggingFace token (if using HuggingFace)
+RAG models: `llm_models.yaml` → `rag.*` keys. Secrets: `.env` (copy from `.env.example`).
 
-Create a `.env` file in the project root with your configuration.
+---
 
-## API Endpoints
+## API reference
 
 ### `GET /`
-Main chatbot interface page.
+
+Main chat page (`templates/chatbot.html`).
 
 ### `POST /api/query`
-Submit a query to the RAG system.
 
-**Request Body:**
+Submit a question. Returns an **SSE stream** (`text/event-stream`).
+
+**Request body:**
+
 ```json
 {
-    "query": "Your question here",
-    "model": "llama3.1:8b"  // Optional, defaults to environment setting
+  "query": "Your question",
+  "history": [
+    {"role": "user", "content": "…"},
+    {"role": "assistant", "content": "…"}
+  ]
 }
 ```
 
-**Response:**
-```json
-{
-    "success": true,
-    "query": "Your question",
-    "answer": "Generated answer...",
-    "matched_documents": ["path/to/doc1.json", "path/to/doc2.json"],
-    "retrieved_nodes": [
-        {
-            "path": "path/to/doc.json",
-            "node_ids": ["0001", "0002"],
-            "thinking": "Reasoning process..."
-        }
-    ],
-    "context_length": 1234
-}
-```
+`history` is optional (omit for first turn).
+
+**SSE event types:**
+
+| Type | Payload |
+|------|---------|
+| `progress` | `{ "message": "Step 1: …", "clear_previous": true }` |
+| `result` | `{ "data": { "answer", "sources", "matched_documents", "step_timings", … } }` |
+| `error` | `{ "error": "…" }` |
 
 ### `GET /api/status`
-Check if DocIndex is available and get system status.
 
-**Response:**
 ```json
 {
-    "docindex_available": true,
-    "docindex_path": "/path/to/DocIndex",
-    "default_model": "llama3.1:8b"
+  "docindex_available": true,
+  "docindex_path": "/path/to/results/DocIndex.json"
 }
 ```
+
+### `GET /docs/<filename>`
+
+Serves PDFs from `Database/` for source link clicks.
+
+---
 
 ## Troubleshooting
 
-### DocIndex Not Found
+| Problem | Fix |
+|---------|-----|
+| DocIndex not found | Run `build_docindex.py` or index via DocIndex manager |
+| No answer / LLM errors | Check terminal; verify `CHATGPT_API_KEY` for `gpt*` aliases or Ollama for local models |
+| Follow-ups ignore context | Page was refreshed; history is session-only |
+| Port in use | Set `FLASK_PORT` or stop the other process |
+| Slow first query | Normal — keyword embeddings warm up on startup |
 
-If you see "DocIndex Not Found" in the status:
-1. Make sure you've run `run_pageindex.py` to generate document structures
-2. Check that `./results/DocIndex` exists
-3. Verify the path in the status message
-
-### Port Already in Use
-
-If port 5000 is already in use, modify `app.py` to use a different port:
-
-```python
-app.run(debug=True, host='0.0.0.0', port=5001)  # Change 5000 to 5001
-```
-
-### Model Not Responding
-
-- Check that your API provider is correctly configured
-- For Ollama: Make sure Ollama is running (`ollama serve`)
-- For OpenAI: Verify your API key is set correctly
-- Check the terminal output for error messages
+---
 
 ## Customization
 
-### Change Port
+- **UI:** `templates/chatbot.html`
+- **Answer prompts:** `RAG/utils.py` (`generate_answer_with_citations`, `combine_answers`, `tree_search`)
+- **Pipeline:** `RAG/rag_query.py`
 
-Edit `app.py` and modify the port in the `app.run()` call.
-
-### Modify UI
-
-Edit `templates/chatbot.html` to customize the appearance and behavior.
-
-### Add Features
-
-The Flask app structure makes it easy to add:
-- Chat history persistence
-- Multiple document selection
-- Export conversations
-- User authentication
+---
 
 ## License
 
-Same as the main PageIndex project.
+Same as the main PageIndex project — see [LICENSE](../LICENSE).

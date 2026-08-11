@@ -8,6 +8,8 @@ chroma-embeddings.parquet
 .DS_Store
 .env*
 !.env.example
+*.pptx#
+.~lock.*
 notebook
 SDK/*
 log/*

@@ -50,6 +50,11 @@
         .btn-secondary { background: rgba(255,255,255,.2); color: #fff; border: 1px solid rgba(255,255,255,.45); }
         .btn-row { background: #f0fdfa; color: #115e59; border: 1px solid #99f6e4; padding: 8px 14px; font-size: 0.82rem; }
         .btn-row.danger-outline { background: #fff7ed; color: #9a3412; border-color: #fdba74; }
+        .btn-row.remove {
+            background: #fef2f2;
+            color: #b91c1c;
+            border-color: #fecaca;
+        }
         .btn-row[data-locked="1"]:disabled {
             opacity: 0.45;
             background: #f1f5f9;
@@ -155,6 +160,50 @@
             0% { transform: translateX(-100%); }
             100% { transform: translateX(320%); }
         }
+        .upload-zone {
+            border: 2px dashed #99f6e4;
+            border-radius: 12px;
+            padding: 24px 20px;
+            text-align: center;
+            background: #f0fdfa;
+            transition: border-color .15s ease, background .15s ease;
+            margin-bottom: 18px;
+        }
+        .upload-zone.is-dragover {
+            border-color: #0d9488;
+            background: #ccfbf1;
+        }
+        .upload-zone.is-busy {
+            opacity: 0.7;
+            pointer-events: none;
+        }
+        .upload-title {
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: #115e59;
+            margin-bottom: 6px;
+        }
+        .upload-hint {
+            font-size: 0.82rem;
+            color: #64748b;
+            margin-bottom: 14px;
+        }
+        .upload-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            justify-content: center;
+            align-items: center;
+        }
+        .upload-actions input[type="file"] { display: none; }
+        .upload-status {
+            margin-top: 12px;
+            font-size: 0.82rem;
+            color: #475569;
+            min-height: 1.2em;
+        }
+        .upload-status.ok { color: #166534; }
+        .upload-status.err { color: #b91c1c; }
     </style>
 </head>
 <body>
@@ -182,6 +231,18 @@
             <div class="section">
                 <h2>Documents in Database folder</h2>
                 <p class="meta" id="dbPath"></p>
+
+                <div class="upload-zone" id="uploadZone">
+                    <div class="upload-title">Upload document</div>
+                    <p class="upload-hint">PDF or Markdown — saved to <code>Database/</code>. Max 100 MB.</p>
+                    <div class="upload-actions">
+                        <input type="file" id="fileInput" accept=".pdf,.md,application/pdf,text/markdown" multiple>
+                        <button type="button" class="btn btn-row" id="btnChooseFile">Choose file(s)</button>
+                        <button type="button" class="btn btn-row" id="btnUpload" disabled>Upload</button>
+                    </div>
+                    <div class="upload-status" id="uploadStatus" aria-live="polite"></div>
+                </div>
+
                 <div id="tableWrap"></div>
             </div>
         </div>
@@ -386,7 +447,8 @@
                         <td><span class="meta">${escapeHtml(status)}</span></td>
                         <td>
                             <div class="actions">
-                                <button type="button" class="btn btn-row danger-outline" data-filename="${fnEnc}"${actionLocked ? ' disabled' : ''}${actionTitleAttr}>${escapeHtml(btnLabel)}</button>
+                                <button type="button" class="btn btn-row danger-outline" data-action="index" data-filename="${fnEnc}"${actionLocked ? ' disabled data-locked="1"' : ''}${actionTitleAttr}>${escapeHtml(btnLabel)}</button>
+                                <button type="button" class="btn btn-row remove" data-action="remove" data-filename="${fnEnc}" title="${escapeAttr('Delete file from Database/, remove structure JSON, and prune DocIndex keywords')}">Remove</button>
                             </div>
                         </td>
                     </tr>
@@ -419,12 +481,20 @@
                     if (url) window.open(url, '_blank', 'noopener,noreferrer');
                 });
             });
-            wrap.querySelectorAll('.actions button[data-filename]').forEach((btn) => {
+            wrap.querySelectorAll('.actions button[data-action="index"]').forEach((btn) => {
                 btn.addEventListener('click', (ev) => {
                     ev.stopPropagation();
                     let filename = btn.getAttribute('data-filename') || '';
                     try { filename = decodeURIComponent(filename); } catch (e) { /* keep raw */ }
                     startProcessDocument(filename);
+                });
+            });
+            wrap.querySelectorAll('.actions button[data-action="remove"]').forEach((btn) => {
+                btn.addEventListener('click', (ev) => {
+                    ev.stopPropagation();
+                    let filename = btn.getAttribute('data-filename') || '';
+                    try { filename = decodeURIComponent(filename); } catch (e) { /* keep raw */ }
+                    removeDocument(filename);
                 });
             });
         }
@@ -510,6 +580,53 @@
             }
         }
 
+        async function parseJsonResponse(r) {
+            const text = await r.text();
+            if (!text) return {};
+            try {
+                return JSON.parse(text);
+            } catch (e) {
+                throw new Error(
+                    `Server returned non-JSON (${r.status}): ${text.slice(0, 200)}`
+                );
+            }
+        }
+
+        async function removeDocument(filename) {
+            const msg =
+                'Remove "' + filename + '"?\n\n' +
+                'This will delete the file from Database/, remove its structure JSON from results/, ' +
+                'and prune all related keyword entries from DocIndex.json.';
+            if (!window.confirm(msg)) return;
+
+            setButtonsBusy(true);
+            if (typeof setUploadBusy === 'function') setUploadBusy(true);
+            try {
+                const r = await fetch('/api/remove-document', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filename }),
+                });
+                const data = await parseJsonResponse(r);
+                if (!r.ok || !data.success) {
+                    alert(data.error || 'Remove failed');
+                    return;
+                }
+                if (docProcessingSummaries[filename]) {
+                    delete docProcessingSummaries[filename];
+                    try {
+                        sessionStorage.setItem(SUMMARIES_KEY, JSON.stringify(docProcessingSummaries));
+                    } catch (e) { /* ignore */ }
+                }
+                await refresh();
+            } catch (e) {
+                alert('Network error: ' + (e.message || e));
+            } finally {
+                setButtonsBusy(false);
+                if (typeof setUploadBusy === 'function') setUploadBusy(false);
+            }
+        }
+
         async function startProcessDocument(filename) {
             setButtonsBusy(true);
             activeJobContext = { kind: 'document', filename };
@@ -541,6 +658,118 @@
 
         document.getElementById('btnReconstruct').addEventListener('click', startReconstruct);
         refresh();
+
+        const uploadZone = document.getElementById('uploadZone');
+        const fileInput = document.getElementById('fileInput');
+        const btnChooseFile = document.getElementById('btnChooseFile');
+        const btnUpload = document.getElementById('btnUpload');
+        const uploadStatus = document.getElementById('uploadStatus');
+        let pendingFiles = [];
+
+        function setUploadStatus(text, kind) {
+            uploadStatus.textContent = text || '';
+            uploadStatus.className = 'upload-status' + (kind ? ' ' + kind : '');
+        }
+
+        function setUploadBusy(busy) {
+            uploadZone.classList.toggle('is-busy', busy);
+            btnChooseFile.disabled = busy;
+            btnUpload.disabled = busy || pendingFiles.length === 0;
+            document.getElementById('btnReconstruct').disabled = busy || !!activeJobId;
+        }
+
+        function syncUploadButton() {
+            btnUpload.disabled = pendingFiles.length === 0 || uploadZone.classList.contains('is-busy');
+        }
+
+        function setPendingFiles(fileList) {
+            pendingFiles = Array.from(fileList || []).filter((f) => {
+                const n = (f.name || '').toLowerCase();
+                return n.endsWith('.pdf') || n.endsWith('.md');
+            });
+            if (fileList && fileList.length && pendingFiles.length === 0) {
+                setUploadStatus('Only .pdf and .md files are supported.', 'err');
+            } else if (pendingFiles.length === 1) {
+                setUploadStatus('Ready: ' + pendingFiles[0].name, '');
+            } else if (pendingFiles.length > 1) {
+                setUploadStatus('Ready: ' + pendingFiles.length + ' files', '');
+            } else {
+                setUploadStatus('', '');
+            }
+            syncUploadButton();
+        }
+
+        btnChooseFile.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', () => setPendingFiles(fileInput.files));
+
+        ['dragenter', 'dragover'].forEach((evt) => {
+            uploadZone.addEventListener(evt, (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                uploadZone.classList.add('is-dragover');
+            });
+        });
+        ['dragleave', 'drop'].forEach((evt) => {
+            uploadZone.addEventListener(evt, (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                uploadZone.classList.remove('is-dragover');
+            });
+        });
+        uploadZone.addEventListener('drop', (e) => {
+            if (e.dataTransfer && e.dataTransfer.files) {
+                setPendingFiles(e.dataTransfer.files);
+            }
+        });
+
+        async function uploadOne(file) {
+            const form = new FormData();
+            form.append('file', file, file.name);
+            const r = await fetch('/api/upload', { method: 'POST', body: form });
+            const data = await r.json().catch(() => ({}));
+            if (!r.ok || !data.success) {
+                throw new Error(data.error || 'Upload failed for ' + file.name);
+            }
+            return data;
+        }
+
+        async function startUpload() {
+            if (!pendingFiles.length) return;
+            setUploadBusy(true);
+            const results = [];
+            const errors = [];
+            for (let i = 0; i < pendingFiles.length; i++) {
+                const file = pendingFiles[i];
+                setUploadStatus(
+                    'Uploading ' + (i + 1) + ' of ' + pendingFiles.length + ': ' + file.name + '…',
+                    ''
+                );
+                try {
+                    results.push(await uploadOne(file));
+                } catch (e) {
+                    errors.push(e.message || String(e));
+                }
+            }
+            fileInput.value = '';
+            pendingFiles = [];
+            syncUploadButton();
+            setUploadBusy(false);
+            if (results.length && !errors.length) {
+                const msg = results.map((r) => r.message || r.filename).join('; ');
+                setUploadStatus(msg, 'ok');
+                await refresh();
+            } else if (results.length && errors.length) {
+                setUploadStatus(
+                    'Uploaded ' + results.length + ' file(s). Errors: ' + errors.join('; '),
+                    'err'
+                );
+                await refresh();
+            } else {
+                setUploadStatus(errors.join('; '), 'err');
+            }
+        }
+
+        btnUpload.addEventListener('click', startUpload);
     </script>
 </body>
 </html>
