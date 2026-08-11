@@ -183,41 +183,6 @@
             border-top: 1px solid #e5e7eb;
         }
 
-        .model-input-container {
-            margin-bottom: 15px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-
-        .model-input-container label {
-            font-size: 14px;
-            color: #6b7280;
-            font-weight: 500;
-            white-space: nowrap;
-            min-width: 60px;
-        }
-
-        .model-input-wrapper {
-            flex: 1;
-            position: relative;
-        }
-
-        .model-input-wrapper select {
-            width: 100%;
-            padding: 10px 15px;
-            border: 2px solid #e5e7eb;
-            border-radius: 8px;
-            font-size: 14px;
-            font-family: inherit;
-            transition: border-color 0.3s;
-        }
-
-        .model-input-wrapper select:focus {
-            outline: none;
-            border-color: #667eea;
-        }
-
         .input-container {
             display: flex;
             gap: 10px;
@@ -376,17 +341,6 @@
         </div>
 
         <div class="chatbot-input">
-            <div class="model-input-container">
-                <label for="model-input">Model:</label>
-                <div class="model-input-wrapper">
-                    <select id="model-input">
-                        <option value="ollama">Ollama (local default)</option>
-                        <option value="qwen" selected>Qwen (via Ollama)</option>
-                        <option value="huggingface">HuggingFace Router</option>
-                        <option value="openai gpt">OpenAI GPT</option>
-                    </select>
-                </div>
-            </div>
             <div class="input-container">
                 <div class="input-wrapper">
                     <textarea 
@@ -406,9 +360,12 @@
     <script>
         const messagesContainer = document.getElementById('messages');
         const queryInput = document.getElementById('query-input');
-        const modelInput = document.getElementById('model-input');
         const sendButton = document.getElementById('send-button');
         const statusText = document.getElementById('status-text');
+
+        // Prior turns sent to the backend for follow-up questions (role: user|assistant).
+        let conversationHistory = [];
+        const MAX_HISTORY_TURNS = 20;
 
         // Check status on load
         checkStatus();
@@ -431,14 +388,6 @@
         }
 
         function handleKeyDown(event) {
-            if (event.key === 'Enter' && !event.shiftKey) {
-                event.preventDefault();
-                sendQuery();
-            }
-        }
-
-        function handleModelKeyDown(event) {
-            // Allow Enter to submit, but don't prevent default for other keys
             if (event.key === 'Enter' && !event.shiftKey) {
                 event.preventDefault();
                 sendQuery();
@@ -616,20 +565,21 @@
 
         async function sendQuery() {
             const query = queryInput.value.trim();
-            const model = modelInput.value.trim() || 'qwen';  // Default to "qwen" if empty
-            
+
             if (!query) {
                 return;
             }
 
             // Disable input and button
             queryInput.disabled = true;
-            modelInput.disabled = true;
             sendButton.disabled = true;
             sendButton.innerHTML = '<div class="loading"></div>';
 
             // Add user message
             addMessage(query, true);
+
+            // Snapshot history before this turn (current query is sent separately).
+            const historyForRequest = conversationHistory.slice();
 
             // Clear input
             queryInput.value = '';
@@ -650,9 +600,9 @@
                     headers: {
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify({ 
+                    body: JSON.stringify({
                         query: query,
-                        model: model
+                        history: historyForRequest,
                     })
                 });
 
@@ -711,6 +661,11 @@
                                             ...timingLines,
                                         ].join('\n');
                                         addMessage(result.answer, false, info, result.sources || []);
+                                        conversationHistory.push({ role: 'user', content: query });
+                                        conversationHistory.push({ role: 'assistant', content: result.answer });
+                                        if (conversationHistory.length > MAX_HISTORY_TURNS) {
+                                            conversationHistory = conversationHistory.slice(-MAX_HISTORY_TURNS);
+                                        }
                                         statusText.textContent = 'Ready';
                                     }
                                 } else if (data.type === 'error') {
@@ -731,7 +686,6 @@
             } finally {
                 // Re-enable input and button
                 queryInput.disabled = false;
-                modelInput.disabled = false;
                 sendButton.disabled = false;
                 sendButton.textContent = 'Send';
                 queryInput.focus();

@@ -29,11 +29,19 @@ def _use_llm(ai_mode: Optional[bool]) -> bool:
     """
     Central switch to enable rule-based alternatives.
 
-    - ai_mode=True  -> use LLM-based implementation
-    - ai_mode=False -> use rule-based implementation
-    - ai_mode=None  -> consult env var PAGEINDEX_AI_MODE (default: True)
+    - ai_mode=True / "llm"  -> use LLM-based implementation
+    - ai_mode=False / "rule" -> use rule-based implementation
+    - ai_mode=None / "auto" -> consult env var PAGEINDEX_AI_MODE (default: True)
     """
     if ai_mode is not None:
+        if isinstance(ai_mode, str):
+            s = ai_mode.strip().lower()
+            if s in {"llm", "1", "true", "yes", "y", "on"}:
+                return True
+            if s in {"rule", "0", "false", "no", "n", "off"}:
+                return False
+            if s == "auto":
+                return _env_flag("PAGEINDEX_AI_MODE", True)
         return bool(ai_mode)
     return _env_flag("PAGEINDEX_AI_MODE", True)
 
@@ -1844,12 +1852,74 @@ def _clean_title_candidate(s: str) -> str:
 
 def _clean_author_token(s: str) -> str:
     s = (s or "").strip()
-    # remove common footnote markers and trailing punctuation
-    s = re.sub(r"[\*\u2020\u2021\u00b6\u00a7]+", "", s)  # *, †, ‡, ¶, §
+    # remove common footnote markers, bullets, and trailing punctuation
+    s = re.sub(r"[\*\u2020\u2021\u00b6\u00a7\u25cf\u26ab\u25aa\u2022\u00b7\uf06c\u2023]+", "", s)
     s = re.sub(r"\b\d+\b", "", s)  # lone footnote numbers
+    s = re.sub(r"(\b[A-Z])\s*\.\s*", r"\1. ", s)
+    s = re.sub(r"\b([A-Z])\s+([a-z])", r"\1\2", s)
+    s = re.sub(r"\s*-\s*", "-", s)
+    s = re.sub(r"\([^)]*\)", "", s)
     s = re.sub(r"\s+", " ", s)
     s = s.strip(" ,;·•|/\\")
     return s.strip()
+
+
+def _is_placeholder_metadata_title(title: str) -> bool:
+    t = (title or "").strip().lower()
+    if not t:
+        return True
+    if t in {"untitled", "[title of document]", "title of document"}:
+        return True
+    if t.startswith("[") and t.endswith("]"):
+        return True
+    return False
+
+
+def _normalize_author_list(raw: str) -> str:
+    """Turn metadata or inline author strings into a comma-separated name list."""
+    s = (raw or "").strip()
+    if not s:
+        return ""
+    s = re.sub(r"[\u25cf\u26ab\u25aa\u2022\u00b7\uf06c\u2023]+", ",", s)
+    parts = re.split(r"[;,/]|(?:\s+and\s+)", s, flags=re.IGNORECASE)
+    names: List[str] = []
+    seen = set()
+    for part in parts:
+        token = _clean_author_token(part)
+        if not token or _is_probably_affiliation_line(token):
+            continue
+        if not _looks_like_person_name(token):
+            continue
+        key = token.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        names.append(token)
+    return ", ".join(names)
+
+
+def _get_pdf_metadata_title_authors(doc) -> Dict[str, str]:
+    """Read title/author from PDF metadata when available."""
+    out = {"title": "", "authors": ""}
+    if not isinstance(doc, str) or not os.path.isfile(doc):
+        return out
+    try:
+        import PyPDF2
+
+        with open(doc, "rb") as f:
+            reader = PyPDF2.PdfReader(f)
+            meta = reader.metadata
+        if not meta:
+            return out
+        title = (getattr(meta, "title", None) or meta.get("/Title") or "").strip()
+        author = (getattr(meta, "author", None) or meta.get("/Author") or "").strip()
+        if title and not _is_placeholder_metadata_title(title):
+            out["title"] = _clean_title_candidate(title)
+        if author:
+            out["authors"] = _normalize_author_list(author)
+    except Exception:
+        pass
+    return out
 
 
 def _is_probably_affiliation_line(line: str) -> bool:
@@ -1870,6 +1940,68 @@ def _is_probably_affiliation_line(line: str) -> bool:
     return False
 
 
+def _looks_like_person_name(token: str) -> bool:
+    s = (token or "").strip()
+    if not s or len(s) < 4 or len(s) > 80:
+        return False
+    if _is_probably_affiliation_line(s):
+        return False
+    if re.search(
+        r"\b(report|submitted|acknowledg|stakeholder|metrics|characterization|training|drivers|"
+        r"systems|challenges|outreach|behavior|surrogates|drowsiness|thresholds|prevalence|"
+        r"associated|commercial|vehicle|educational|automated|motorcycle|kinematics|standards|"
+        r"re-?evaluating|near-?crashes?|search|valid|reliable|status|level|pilot|study|developing|"
+        r"effective|educational|authors?)\b",
+        s,
+        re.I,
+    ):
+        return False
+    s = re.sub(r"\([^)]*\)", "", s).strip()
+    s = re.sub(r"\b(PhD|MD|Dr\.?|Prof\.?)\b", "", s, flags=re.I).strip()
+    # Descriptive title compounds like "Data-Driven" or "Near-Crashes"
+    if re.search(r"[a-z]-[A-Z]", s) and not re.search(r"[A-Z][a-z]+-[A-Z][a-z]+", s):
+        return False
+  # Split on initials glued to surnames, e.g. "Y. Linkous"
+    parts = [p for p in re.split(r"\s+", s) if p]
+    if len(parts) < 2 or len(parts) > 6:
+        return False
+    for part in parts:
+        if re.fullmatch(r"[A-Z]\.?", part):
+            continue
+        if not re.fullmatch(r"[A-Z][A-Za-z'.-]{1,}", part):
+            return False
+    return True
+
+
+def _looks_like_subtitle_line(ln: str) -> bool:
+    s = (ln or "").strip()
+    if not s or _looks_like_author_line(s):
+        return False
+    return bool(
+        re.search(r"\b(for|that|which|with|using|to)\b", s, re.I)
+        or re.match(r"^(A|An|The)\b", s, re.I)
+    )
+
+
+def _looks_like_author_line(ln: str) -> bool:
+    s = (ln or "").strip()
+    if not s:
+        return False
+    if re.match(r"^\s*Authors?\s*:", s, flags=re.IGNORECASE):
+        return True
+    if _is_probably_affiliation_line(s):
+        return False
+    if re.match(r"^\s*(abstract|keywords|index terms|submitted|report\s*#)\b", s, flags=re.IGNORECASE):
+        return False
+    if re.search(r"[\u25cf\u26ab\u25aa\u2022\u00b7\uf06c\u2023]", s):
+        tokens = _split_author_line(s)
+        return sum(1 for t in tokens if _looks_like_person_name(t)) >= 1
+    if "," in s:
+        tokens = [t.strip() for t in s.split(",") if t.strip()]
+        return sum(1 for t in tokens if _looks_like_person_name(t)) >= 2
+    return _looks_like_person_name(s)
+
+
 def _split_author_line(line: str) -> List[str]:
     """
     Split an author line into name-ish tokens, with conservative separators.
@@ -1880,31 +2012,35 @@ def _split_author_line(line: str) -> List[str]:
     l = re.sub(r"(\d)([A-Z])", r"\1, \2", l)
     l = re.sub(r"\d+\s*", ", ", l)
     l = re.sub(r"\s*,\s*", ", ", l)
-    # normalize separators
-    l = l.replace("·", ",").replace("•", ",").replace("|", ",").replace(" and ", ", ")
+    # normalize separators (bullets, middots, private-use Word bullets, etc.)
+    l = re.sub(r"[\u25cf\u26ab\u25aa\u2022\u00b7\uf06c\u2023]+", ", ", l)
+    l = l.replace("|", ",").replace(" and ", ", ")
     parts = [p.strip() for p in re.split(r",|;|/|\\", l) if p.strip()]
     return parts
+
+
+def _strip_report_trailer(line: str) -> str:
+    return re.sub(r"\s*Report\s*#.*$", "", (line or ""), flags=re.IGNORECASE).strip()
 
 
 def _extract_title_and_authors_rulebased(page_list, max_pages_to_inspect: int = 2) -> Dict[str, str]:
     """
     Heuristic extractor:
-    - title: PDF metadata title if sane, else best title-like block near start of page 1
-    - authors: lines immediately following title, filtered to avoid affiliations/emails
+    - title: best title-like block on page 1 (acknowledgments on later pages are ignored)
+    - authors: lines immediately following title on page 1
     """
     out = {"title": "", "authors": ""}
 
-    
+    if not page_list:
+        return out
 
-    # Parse first pages' text into lines
-    pages_to_check = page_list[: max(1, int(max_pages_to_inspect))]
-    text = "\n".join(
-        [p[0] if isinstance(p, (list, tuple)) and len(p) > 0 else str(p) for p in pages_to_check]
-    )
+    # Title/authors almost always appear on page 1; later pages often contain acknowledgments
+    # that pollute single-line title scoring when concatenated.
+    first_page = page_list[0]
+    text = first_page[0] if isinstance(first_page, (list, tuple)) and len(first_page) > 0 else str(first_page)
     raw_lines = [ln.strip() for ln in (text or "").splitlines()]
-    # drop empty and obvious noise
     lines: List[str] = []
-    for ln in raw_lines[:200]:  # only early part matters
+    for ln in raw_lines[:40]:
         if not ln:
             continue
         if re.fullmatch(r"\d+", ln):
@@ -1916,114 +2052,69 @@ def _extract_title_and_authors_rulebased(page_list, max_pages_to_inspect: int = 
     if not lines:
         return out
 
-    # 3) Find where abstract starts (common divider)
-    abstract_idx = None
-    for i, ln in enumerate(lines[:80]):
-        if re.match(r"^\s*(abstract|keywords|index terms)\b", ln, flags=re.IGNORECASE):
-            abstract_idx = i
+    title_lines: List[str] = []
+    author_candidates: List[str] = []
+    for ln in lines:
+        if re.match(r"^\s*(abstract|keywords|index terms|acknowledg\w*)\b", ln, flags=re.IGNORECASE):
             break
-    search_upto = abstract_idx if abstract_idx is not None else min(len(lines), 60)
-    head = lines[:search_upto]
+        if re.match(r"^\s*(submitted|report\s*#)\b", ln, flags=re.IGNORECASE):
+            break
+        if re.match(r"^\s*Report\s*#", ln, flags=re.IGNORECASE):
+            continue
+        if _is_probably_affiliation_line(ln):
+            if title_lines:
+                break
+            continue
 
-    # 4) Title block heuristic (2-4 lines near the top, before abstract)
-    # Pick the best start among first ~15 lines by a simple score.
-    def looks_like_author_line(ln: str) -> bool:
-        s = (ln or "").strip()
-        if not s:
-            return False
-        if _is_probably_affiliation_line(s):
-            return False
-        # footnote digits are very common in author lines
-        if re.search(r"\d", s) and re.search(r"[A-Za-z]", s) and len(s) <= 120:
-            return True
-        # comma-separated list of short name-like chunks
-        if s.count(",") >= 1 and len(s) <= 120 and not any(k in s.lower() for k in ["abstract", "keywords"]):
-            return True
-        # multiple capitalized tokens (First Last First Last), short-ish
-        caps = re.findall(r"\b[A-Z][a-z]{1,}\b", s)
-        if len(caps) >= 4 and len(s) <= 120:
-            return True
-        return False
+        author_line = ln.strip()
+        if re.match(r"^\s*Authors?\s*:", author_line, flags=re.IGNORECASE):
+            author_line = re.sub(r"^\s*Authors?\s*:\s*", "", author_line, flags=re.IGNORECASE).strip()
+            if author_line:
+                author_candidates.append(author_line)
+            continue
 
-    def title_line_score(ln: str) -> float:
-        s = ln.strip()
-        if len(s) < 6:
-            return -10
-        if _is_probably_affiliation_line(s):
-            return -10
-        if re.match(r"^\s*(abstract|keywords|index terms)\b", s, flags=re.IGNORECASE):
-            return -10
-        # penalize lines that look like section headers
-        if re.match(r"^\s*(\d+(\.\d+)*)\s+[A-Z]", s):
-            return -3
-        # prefer longer, letter-heavy lines
-        letters = sum(ch.isalpha() for ch in s)
-        score = len(s) + 0.5 * letters
-        # penalize too many commas (often author/affiliation lists)
-        score -= 12 * s.count(",")
-        return score
+        if not title_lines and not author_candidates:
+            if _looks_like_author_line(ln):
+                author_candidates.append(ln.strip())
+                break
+            title_lines.append(ln)
+            continue
 
-    best_i = max(range(min(len(head), 15)), key=lambda i: title_line_score(head[i]))
-    # Build a multi-line title by concatenating subsequent lines until a stop condition.
-    title_lines = [head[best_i]]
-    for j in range(best_i + 1, min(best_i + 4, len(head))):
-        nxt = head[j].strip()
-        if not nxt:
-            break
-        if looks_like_author_line(nxt):
-            break
-        if _is_probably_affiliation_line(nxt):
-            break
-        if re.match(r"^\s*(abstract|keywords|index terms)\b", nxt, flags=re.IGNORECASE):
-            break
-        # stop if next line is extremely short (likely author marker/superscripts)
-        if len(nxt) <= 3:
-            break
-        title_lines.append(nxt)
-        # stop if title already looks complete (ends with period)
-        if title_lines[-1].endswith(".") and len(" ".join(title_lines)) >= 30:
-            break
+        if author_candidates:
+            if _looks_like_author_line(ln) or re.search(r"[\u25cf\u26ab\u25aa\u2022\u00b7\uf06c\u2023]", ln):
+                author_candidates.append(ln.strip())
+                if len(author_candidates) >= 4:
+                    break
+            else:
+                break
+            continue
+
+        if _looks_like_author_line(ln):
+            author_candidates.append(ln.strip())
+            continue
+        if _looks_like_subtitle_line(ln):
+            title_lines.append(ln)
+            continue
+        if len(title_lines) >= 1:
+            # Additional short title fragments before authors (wrapped title lines).
+            title_lines.append(ln)
+            continue
+        title_lines.append(ln)
 
     title_guess = _clean_title_candidate(" ".join(title_lines))
-    if title_guess and (not out["title"] or len(title_guess) > len(out["title"])):
+    if title_guess:
         out["title"] = title_guess
 
-    # 5) Author lines heuristic: lines right after title block, up to blank/abstract/affiliation
-    after_title_idx = best_i + len(title_lines)
-    author_candidates: List[str] = []
-    for ln in head[after_title_idx : min(after_title_idx + 8, len(head))]:
-        if not ln.strip():
-            break
-        if re.match(r"^\s*(abstract|keywords|index terms)\b", ln, flags=re.IGNORECASE):
-            break
-        if _is_probably_affiliation_line(ln):
-            # affiliations often start immediately; stop rather than skip to avoid grabbing noise
-            break
-        author_candidates.append(ln.strip())
-        # usually authors fit within 1-3 lines
-        if len(author_candidates) >= 3:
-            break
-
-    # Try to split candidate lines into names
     author_tokens: List[str] = []
-    for ln in author_candidates:
-        for token in _split_author_line(ln):
-            token = _clean_author_token(token)
-            if not token:
-                continue
-            if _is_probably_affiliation_line(token):
-                continue
-            # avoid capturing the whole title again
-            if out["title"] and SequenceMatcher(None, token.lower(), out["title"].lower()).ratio() > 0.75:
-                continue
-            # require at least one letter and a space (first/last)
-            if not re.search(r"[A-Za-z]", token):
-                continue
-            if " " not in token and len(token) <= 3:
-                continue
-            author_tokens.append(token)
+    author_blob = " ".join(_strip_report_trailer(ln) for ln in author_candidates)
+    for token in _split_author_line(author_blob):
+        token = _clean_author_token(token)
+        if not token or not _looks_like_person_name(token):
+            continue
+        if out["title"] and SequenceMatcher(None, token.lower(), out["title"].lower()).ratio() > 0.75:
+            continue
+        author_tokens.append(token)
 
-    # De-dup while preserving order
     seen = set()
     uniq = []
     for t in author_tokens:
@@ -2043,10 +2134,16 @@ async def extract_title_and_authors(page_list, max_pages_to_inspect=10, model=No
 
     Returns a dict: {'title': ..., 'authors': ...}
     """
+    meta = _get_pdf_metadata_title_authors(doc) if doc is not None else {"title": "", "authors": ""}
+
     if not _use_llm(ai_mode):
         out = _extract_title_and_authors_rulebased(
             page_list, max_pages_to_inspect=min(2, int(max_pages_to_inspect))
         )
+        if not out.get("title") and meta.get("title"):
+            out["title"] = meta["title"]
+        if not out.get("authors") and meta.get("authors"):
+            out["authors"] = meta["authors"]
         if "title" not in out:
             out["title"] = ""
         if "authors" not in out:
@@ -2104,6 +2201,10 @@ async def extract_title_and_authors(page_list, max_pages_to_inspect=10, model=No
         out["title"] = ""
     if "authors" not in out:
         out["authors"] = ""
+    if not out.get("title") and meta.get("title"):
+        out["title"] = meta["title"]
+    if not out.get("authors") and meta.get("authors"):
+        out["authors"] = meta["authors"]
     return out
 
 
@@ -2137,7 +2238,14 @@ def page_index_main(doc, opt=None, step_timings: Optional[List[Dict[str, Any]]] 
 
     print("Step 2: Extracting title and authors...")
     t0 = time.perf_counter()
-    doc_title_authors = asyncio.run(extract_title_and_authors(page_list, model=opt.model))
+    doc_title_authors = asyncio.run(
+        extract_title_and_authors(
+            page_list,
+            model=opt.model,
+            doc=doc,
+            ai_mode=getattr(opt, "ai_mode", None),
+        )
+    )
     logger.info({'extracted_title': doc_title_authors.get('title'), 'extracted_authors': doc_title_authors.get('authors')})
     _record_step_time(step_timings, "Step 2: Extracting title and authors", t0)
 

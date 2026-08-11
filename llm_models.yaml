@@ -1,0 +1,79 @@
+# Central LLM / embedding model configuration for PageIndex.
+# Edit aliases or chat_model / embed_model below, then restart scripts or interfaces.
+#
+# chat_model: any alias in `aliases` OR a raw Ollama tag / API model name.
+# Tags without :latest are auto-matched to installed Ollama models (see model_registry.py).
+#
+# Env overrides: PAGEINDEX_CHAT_MODEL, PAGEINDEX_EMBED_MODEL, RAG_CHAT_MODEL,
+#   RAG_TREE_SEARCH_MODEL, RAG_EMBED_MODEL, QWEN_MODEL, OLLAMA_MODEL, OLLAMA_BASE_URL
+# OpenAI chat uses CHATGPT_API_KEY from .env (aliases: gpt4mini, gpt4o, gpt51, …)
+
+providers:
+  ollama_base_url: "http://localhost:11434/v1"
+  # OpenAI API — key from .env CHATGPT_API_KEY (default https://api.openai.com/v1)
+
+# --- Installed locally (verified via ollama list / api/tags) ---
+# Use these aliases directly in indexing.chat_model or rag.chat_model:
+#   qwen, qwen14     -> qwen2.5:14b
+#   qwen7            -> qwen2.5:7b
+#   ollama, llama8   -> llama3.1:8b
+#   llama70          -> llama3.1:70b
+#   llama8q8         -> llama3.1:8b-instruct-q8_0
+#   sqlcoder         -> sqlcoder:latest
+# Embeddings (indexing.embed_model / rag.keyword_embed_model):
+#   mxbai-embed-large  -> resolves to mxbai-embed-large:latest
+#
+# --- Optional Qwen (not installed here; ollama pull <tag> first) ---
+#   qwen2.5:0.5b, qwen2.5:1.5b, qwen2.5:3b, qwen2.5:32b, qwen2.5:72b
+#   qwen2.5-coder:7b, qwen2.5-coder:14b, qwen3:8b, qwen3:14b, qwen2.5vl:7b
+#
+# --- Optional other chat (not installed; ollama pull <tag> first) ---
+#   llama3.2:3b, mistral:7b, phi3:mini, phi3:medium, gemma2:9b, deepseek-r1:8b
+#   nomic-embed-text, snowflake-arctic-embed, bge-m3, all-minilm  (embeddings)
+#
+# --- Remote OpenAI (CHATGPT_API_KEY in .env) ---
+#   gpt4mini            -> gpt-4o-mini (higher TPM, good for bulk indexing)
+#   openai, gpt, gpt4o  -> gpt-4o-2024-11-20
+#   gpt51               -> gpt-5.1
+# Or pass raw API id: gpt-4o-2024-11-20, gpt-4o-mini, gpt-5.1
+#
+# --- Other remote APIs ---
+#   huggingface alias below   (HF_TOKEN in .env)
+
+aliases:
+  # Qwen (installed)
+  qwen: "qwen2.5:14b"
+  qwen14: "qwen2.5:14b"
+  qwen7: "qwen2.5:7b"
+  # Llama / other local chat (installed)
+  ollama: "llama3.1:8b"
+  llama8: "llama3.1:8b"
+  llama70: "llama3.1:70b"
+  llama8q8: "llama3.1:8b-instruct-q8_0"
+  sqlcoder: "sqlcoder:latest"
+  # OpenAI (CHATGPT_API_KEY in .env)
+  gpt4mini: "gpt-4o-mini"
+  openai: "gpt-4o-2024-11-20"
+  gpt: "gpt-4o-2024-11-20"
+  gpt4o: "gpt-4o-2024-11-20"
+  gpt51: "gpt-5.1"
+  gpt4: "gpt-4o-2024-11-20"
+  # Hugging Face router (HF_TOKEN in .env)
+  huggingface: "openai/gpt-oss-120b:groq"
+
+# PageIndex + DocIndex (run_pageindex.py, build_docindex.py)
+indexing:
+  chat_model: qwen7
+  embed_model: mxbai-embed-large
+
+# RAG (RAG/rag_query.py, RAG-Interface)
+rag:
+  chat_model: gpt51
+  # Examples using installed aliases:
+  #   tree_search_model: qwen7      # faster tree search
+  #   tree_search_model: llama8
+  # null = same as chat_model
+  tree_search_model: gpt51
+  keyword_embed_model: mxbai-embed-large
+  # Max documents to run tree search on (top-ranked from Step 1 keyword match)
+#  max_tree_search_docs: 2  #Uncomment this to limit the number of documents to run tree search on

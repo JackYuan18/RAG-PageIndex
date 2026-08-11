@@ -9,6 +9,7 @@ from collections import defaultdict
 from typing import Any, Dict, List, Optional
 
 from pageindex import *
+from pageindex.model_registry import get_indexing_chat_model, get_indexing_embed_model, validate_configured_models
 from pageindex.page_index_md import md_to_tree
 from datetime import datetime
 
@@ -102,7 +103,7 @@ def merge_keywords_llm(keywords, doc_index, model=None):
     updated_doc_index = doc_index.copy()
     sim_cache = {}
 
-    for i, new_kw in enumerate(keywords):
+    for i, new_kw in enumerate(_keyword_merge_progress(keywords, desc="Merging keywords (llm)")):
         for existing_kw in list(doc_index.keys()):
             # print(f'new_kw: {new_kw}, existing_kw: {existing_kw}')
             # Use AI to determine whether similar in meaning
@@ -150,6 +151,23 @@ def _make_lsh_planes(dim: int, bits: int, seed: int) -> list[list[float]]:
     return planes
 
 
+def _keyword_merge_progress(items, desc: str = "Merging keywords"):
+    """Iterate with a tqdm bar when available, else a simple line counter."""
+    total = len(items) if items is not None else 0
+    if total == 0:
+        return items
+    try:
+        from tqdm import tqdm
+
+        return tqdm(items, total=total, desc=desc, unit="kw", dynamic_ncols=True)
+    except ImportError:
+        pass
+    for n, item in enumerate(items, start=1):
+        print(f"\r  {desc}: {n}/{total}", end="", flush=True)
+        yield item
+    print()
+
+
 def merge_keywords_embed_ann(keywords, doc_index, *, opt=None):
     """
     Scalable keyword merge: embed keywords and map new keywords to nearest existing keyword
@@ -177,6 +195,9 @@ def merge_keywords_embed_ann(keywords, doc_index, *, opt=None):
     existing_norm = [n for n in existing_norm if n]
     new_norm = [_kw_norm(k) for k in updated_keywords]
 
+    print(
+        f"  Embedding {len(existing_norm)} existing + {len(new_norm)} new keywords for merge..."
+    )
     # Embed (cached by utils.py embedding cache)
     emb_existing = embed_texts_ollama(existing_norm, embed_model=embed_model)
     emb_new = embed_texts_ollama(new_norm, embed_model=embed_model)
@@ -193,7 +214,10 @@ def merge_keywords_embed_ann(keywords, doc_index, *, opt=None):
         buckets.setdefault(sig, []).append(i)
 
     # For each new kw, scan its bucket (bounded) and merge if close enough.
-    for i, (kw_raw, kw_n, v) in enumerate(zip(updated_keywords, new_norm, emb_new)):
+    pairs = list(zip(updated_keywords, new_norm, emb_new))
+    for i, (kw_raw, kw_n, v) in enumerate(
+        _keyword_merge_progress(pairs, desc="Merging keywords (embed)")
+    ):
         if not kw_n:
             continue
         # Exact normalized match first
@@ -235,13 +259,16 @@ def process_document(
 ):
     """
     pageindex_ai_mode:
-      - True  => force LLM-based PageIndex internals (PAGEINDEX_AI_MODE=1)
-      - False => force rule-based PageIndex internals (PAGEINDEX_AI_MODE=0)
-      - None  => leave environment as-is (default behavior)
+      - "llm"  => force LLM-based PageIndex internals (PAGEINDEX_AI_MODE=1)
+      - "rule" => force rule-based PageIndex internals (PAGEINDEX_AI_MODE=0)
+      - "auto" => leave PAGEINDEX_AI_MODE env unchanged
     """
     pageindex_ai_mode = opt.ai_mode
-    if pageindex_ai_mode is not None:
-        os.environ["PAGEINDEX_AI_MODE"] = "1" if pageindex_ai_mode == 'llm' else "0"
+    if pageindex_ai_mode == "llm":
+        os.environ["PAGEINDEX_AI_MODE"] = "1"
+    elif pageindex_ai_mode == "rule":
+        os.environ["PAGEINDEX_AI_MODE"] = "0"
+    # "auto" — leave PAGEINDEX_AI_MODE env unchanged
     step_timings: List[Dict[str, Any]] = []
     doc_index = defaultdict(set)
     t_process = time.perf_counter()
@@ -297,13 +324,19 @@ def process_document(
             )
 
             print("Step 13: Merging keywords into DocIndex...")
+            merge_method = str(getattr(opt, "keyword_merge_method", None) or "llm").strip().lower()
+            print(f"  Using keyword merge method: {merge_method}")
             t0 = time.perf_counter()
             merged_keywords, doc_index = merge_keywords(
                 keywords, doc_index, model=opt.model, opt=opt
             )
             for kw in merged_keywords:
                 doc_index[kw].add(output_file)
-            _finish_step(step_timings, "Step 13: Merging keywords into DocIndex", t0)
+            _finish_step(
+                step_timings,
+                f"Step 13: Merging keywords into DocIndex (method={merge_method})",
+                t0,
+            )
 
             print("Step 14: Writing DocIndex.json...")
             t0 = time.perf_counter()
@@ -333,7 +366,8 @@ if __name__ == "__main__":
     parser.add_argument('--md_path', type=str, help='Path to the Markdown file')
 
     # parser.add_argument('--model', type=str, default='gpt-5.1', help='Model to use')
-    parser.add_argument('--model', type=str, default='qwen', help='Model to use')
+    parser.add_argument('--model', type=str, default=get_indexing_chat_model(),
+                      help='Model to use (default: llm_models.yaml indexing.chat_model)')
 
     parser.add_argument('--toc-check-pages', type=int, default=20, 
                       help='Number of pages to check for table of contents (PDF only)')
@@ -379,22 +413,22 @@ if __name__ == "__main__":
         "--summary-method",
         dest="summary_method",
         choices=["llm", "mmr"],
-        default='mmr',
-        help="Leaf node summarization backend (opt.summary_method); omit to use config / env",
+        default='llm',
+        help="Leaf node summarization backend (opt.summary_method); default: llm",
     )
     parser.add_argument(
         "--parent-summary-method",
         dest="parent_summary_method",
         choices=["llm", "mmr"],
-        default='mmr',
-        help="Parent node summarization backend (opt.parent_summary_method); omit to use config / env",
+        default='llm',
+        help="Parent node summarization backend (opt.parent_summary_method); default: llm",
     )
     parser.add_argument(
         "--abstract-method",
         dest="abstract_method",
         choices=["llm", "mmr"],
-        default='mmr',
-        help="Document abstract backend (opt.abstract_method); omit to use config / env",
+        default='llm',
+        help="Document abstract backend (opt.abstract_method); default: llm",
     )
     parser.add_argument(
         "--keyword-method",
@@ -415,6 +449,8 @@ if __name__ == "__main__":
     output_dir = './results'
 
     print(f'Using model: {args.model}')
+    for warning in validate_configured_models():
+        print(f'Model config warning: {warning}')
     # Validate that exactly one file type is specified
     if not args.pdf_path and not args.md_path:
         raise ValueError("Either --pdf_path or --md_path must be specified")
@@ -447,6 +483,7 @@ if __name__ == "__main__":
         # Configure optionsdoc_index_path = os.path.join(output_dir, "DocIndex.json")
         opt = config(
             model=args.model,
+            ollama_embed_model=get_indexing_embed_model(),
             toc_check_page_num=args.toc_check_pages,
             max_page_num_each_node=args.max_pages_per_node,
             max_token_num_each_node=args.max_tokens_per_node,

@@ -27,8 +27,36 @@ if project_root not in sys.path:
 
 # Import RAG query function
 from RAG.rag_query import rag_query
+from RAG.utils import load_docindex, warm_docindex_keyword_embeddings, _default_ollama_embed_model
+from pageindex.model_registry import get_rag_chat_model, get_rag_embed_model
 
 load_dotenv()
+
+_warm_lock = threading.Lock()
+_warm_started = False
+
+
+def _warm_keyword_embeddings_background():
+    """Pre-embed DocIndex keywords so Step 1 only embeds the user query."""
+    global _warm_started
+    with _warm_lock:
+        if _warm_started:
+            return
+        _warm_started = True
+    try:
+        if not os.path.exists(DOCINDEX_PATH):
+            return
+        doc_index = load_docindex(DOCINDEX_PATH, quiet=True)
+        n = warm_docindex_keyword_embeddings(
+            doc_index,
+            embed_model=get_rag_embed_model(),
+        )
+        print(
+            f"DocIndex keyword embedding warm-up complete "
+            f"({n} new embedding(s), model={get_rag_embed_model()})."
+        )
+    except Exception as e:
+        print(f"Warning: DocIndex keyword warm-up failed: {e}")
 
 app = Flask(__name__)
 app.config['JSON_AS_ASCII'] = False  # Support non-ASCII characters
@@ -74,25 +102,9 @@ def query():
     try:
         data = request.get_json()
         query_text = data.get('query', '').strip()
-        model_choice = data.get('model', 'qwen')  # Value from dropdown
+        conversation_history = data.get('history') or data.get('conversation_history')
+        model = get_rag_chat_model()
 
-        # Map dropdown choices to actual model strings / providers
-        if model_choice == 'ollama':
-            # Use default Ollama model from environment (handled in utils)
-            model = 'ollama'
-        elif model_choice == 'qwen':
-            # Use a sensible default Qwen model (served via Ollama or remote)
-            model = 'qwen'
-        elif model_choice == 'huggingface':
-            # Use HuggingFace router (handled in utils.get_model_name)
-            model = 'huggingface'
-        elif model_choice == 'openai gpt':
-            # Default OpenAI GPT model
-            model = 'gpt-5.1'
-        else:
-            # Fallback to raw value
-            model = model_choice
-        
         if not query_text:
             return jsonify({
                 'success': False,
@@ -120,7 +132,13 @@ def query():
                 asyncio.set_event_loop(loop)
                 try:
                     result = loop.run_until_complete(
-                        rag_query(query_text, model=model, doc_index_path=DOCINDEX_PATH, progress_callback=progress_callback)
+                        rag_query(
+                            query_text,
+                            model=model,
+                            doc_index_path=DOCINDEX_PATH,
+                            progress_callback=progress_callback,
+                            conversation_history=conversation_history,
+                        )
                     )
                     result_container['result'] = result
                     progress_queue.put({'type': 'complete'})
@@ -216,6 +234,8 @@ if __name__ == '__main__':
     if not os.path.exists(DOCINDEX_PATH):
         print(f"Warning: DocIndex not found at {DOCINDEX_PATH}")
         print("Please run run_pageindex.py first to generate document structures and DocIndex.")
+    else:
+        threading.Thread(target=_warm_keyword_embeddings_background, daemon=True).start()
     
     # Get port from environment variable or use default
     port = int(os.getenv('FLASK_PORT', 5001))
@@ -226,21 +246,33 @@ if __name__ == '__main__':
         url = f'http://localhost:{port}'
     else:
         url = f'http://{host}:{port}'
-    
-    # Function to open browser after a short delay
+
+    def _open_browser_opt_in() -> bool:
+        return os.getenv("FLASK_OPEN_BROWSER", "").strip().lower() in ("1", "true", "yes", "on")
+
     def open_browser():
+        if not _open_browser_opt_in():
+            return
         time.sleep(1.5)  # Wait for Flask to start
         print(f"Opening browser at {url}...")
-        webbrowser.open(url)
-    
-    # Start browser opening in a separate thread
-    browser_thread = threading.Thread(target=open_browser)
-    browser_thread.daemon = True
-    browser_thread.start()
+        # Avoid Linux GTK atk-bridge warning when spawning the default browser.
+        env = os.environ.copy()
+        env.setdefault("NO_AT_BRIDGE", "1")
+        try:
+            import subprocess
+            subprocess.Popen(["xdg-open", url], env=env, start_new_session=True)
+        except (FileNotFoundError, OSError):
+            os.environ.setdefault("NO_AT_BRIDGE", "1")
+            webbrowser.open(url)
+
+    if _open_browser_opt_in():
+        threading.Thread(target=open_browser, daemon=True).start()
     
     # Run the Flask app
     print(f"Starting chatbot interface...")
     print(f"DocIndex path: {DOCINDEX_PATH}")
-    print(f"Server will open at {url}")
+    print(f"Open in browser: {url}")
+    if not _open_browser_opt_in():
+        print("Tip: set FLASK_OPEN_BROWSER=1 to auto-open the browser on start.")
     
     app.run(debug=True, host=host, port=port, use_reloader=False)

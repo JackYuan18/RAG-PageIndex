@@ -20,6 +20,8 @@ from typing import Any, Dict, List, Optional, Set
 
 from flask import Flask, abort, jsonify, render_template, request, send_from_directory
 
+from pageindex.model_registry import get_indexing_chat_model
+
 script_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(script_dir)
 
@@ -228,7 +230,7 @@ def api_process_document():
     data = request.get_json(silent=True) or {}
     filename = data.get("filename") or ""
     mode = (data.get("mode") or "update_structure").strip()
-    model = (data.get("model") or "qwen").strip() or "qwen"
+    model = (data.get("model") or get_indexing_chat_model()).strip() or get_indexing_chat_model()
 
     if mode != "update_structure":
         return jsonify({"success": False, "error": "Invalid mode"}), 400
@@ -279,14 +281,29 @@ if __name__ == "__main__":
     host = os.environ.get("FLASK_HOST", "0.0.0.0")
     open_url = f"http://localhost:{port}" if host == "0.0.0.0" else f"http://{host}:{port}"
 
+    def _open_browser_opt_in() -> bool:
+        return os.environ.get("FLASK_OPEN_BROWSER", "").strip().lower() in ("1", "true", "yes", "on")
+
     def open_browser() -> None:
+        if not _open_browser_opt_in():
+            return
         time.sleep(1.5)
         print(f"Opening browser at {open_url}...")
-        webbrowser.open(open_url)
+        env = os.environ.copy()
+        env.setdefault("NO_AT_BRIDGE", "1")
+        try:
+            import subprocess
+            subprocess.Popen(["xdg-open", open_url], env=env, start_new_session=True)
+        except (FileNotFoundError, OSError):
+            os.environ.setdefault("NO_AT_BRIDGE", "1")
+            webbrowser.open(open_url)
 
-    threading.Thread(target=open_browser, daemon=True).start()
+    if _open_browser_opt_in():
+        threading.Thread(target=open_browser, daemon=True).start()
 
     print(f"DocIndex interface: {open_url}")
+    if not _open_browser_opt_in():
+        print("Tip: set FLASK_OPEN_BROWSER=1 to auto-open the browser on start.")
     print(f"Database: {DATABASE_DIR}")
     print(f"DocIndex: {DOCINDEX_PATH}")
     app.run(debug=True, host=host, port=port, use_reloader=False)

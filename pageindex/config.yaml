@@ -6,17 +6,19 @@ if_add_node_id: "yes"
 if_add_node_summary: "yes"
 if_add_parent_node_summary: "yes"
 if_add_doc_description: "no"
+if_add_doc_abstract: "yes"
 if_add_node_text: "no"
 summary_token_threshold: 200
-summary_max_concurrency: 8
-parent_summary_max_concurrency: 8
+# Lower when using OpenAI (avoids TPM rate limits); raise for local Ollama
+summary_max_concurrency: 1
+parent_summary_max_concurrency: 1
 
-# Summarization backends (leaf + parent)
-# - llm: existing behavior (ChatGPT_API_async)
+# Summarization backends (leaf + parent) — default: llm (smaller summary_payload for RAG tree search)
+# - llm: ChatGPT_API_async abstractive summaries (default)
 # - mmr: chunk → embed (Ollama embeddings) → MMR diverse top-k → concat
 summary_method: "llm"
 parent_summary_method: "llm"
-# Document-level abstract: llm (ChatGPT_API) or mmr (pool node summaries → embed → MMR)
+# Document-level abstract: llm (default) or mmr (pool node summaries → embed → MMR)
 abstract_method: "llm"
 # Keyword generation:
 # - llm: generate keywords from doc_abstract text

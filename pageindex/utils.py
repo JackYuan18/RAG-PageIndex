@@ -23,10 +23,12 @@ CHATGPT_API_KEY = os.getenv("CHATGPT_API_KEY")
 HF_TOKEN = os.getenv("HF_TOKEN")
 # API Provider: "ollama", "openai", "huggingface", or None (auto-detect)
 # API_PROVIDER = os.getenv("API_PROVIDER", "ollama").lower()  # Default to Ollama
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:8b")  # Default model for Ollama
-# OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.1:70b")
-QWEN_MODEL = os.getenv("QWEN_MODEL", "qwen2.5:14b")
+from pageindex.model_registry import get_aliases, get_ollama_base_url, resolve_chat_model, uses_ollama_chat_provider
+
+# Backward-compatible names (resolved from llm_models.yaml / env).
+OLLAMA_BASE_URL = get_ollama_base_url()
+OLLAMA_MODEL = get_aliases().get("ollama", "llama3.1:8b")
+QWEN_MODEL = get_aliases().get("qwen", "qwen2.5:14b")
 
 # Defaults for Ollama embedding chunking (overridden by env PAGEINDEX_EMBED_* when set).
 PAGEINDEX_EMBED_MAX_CHARS = 512
@@ -172,17 +174,10 @@ def merge_near_duplicate_candidates(candidates: list[dict], opt=None) -> list[di
 
 def get_openai_client(model):
     """Get OpenAI client configured for the selected provider."""
-        
-    if model == "ollama":
-        # Ollama uses OpenAI-compatible API, no API key needed
+    if uses_ollama_chat_provider(model):
         return openai.OpenAI(
-            base_url=OLLAMA_BASE_URL,
-            api_key="ollama"  # Ollama doesn't require a real API key
-        )
-    elif model == "qwen":
-        return openai.OpenAI(
-            base_url=OLLAMA_BASE_URL,
-            api_key="qwen"
+            base_url=get_ollama_base_url(),
+            api_key="ollama",
         )
     elif model == "huggingface":
         return openai.OpenAI(
@@ -194,15 +189,10 @@ def get_openai_client(model):
 
 def get_async_openai_client(model):
     """Get async OpenAI client configured for the selected provider."""
-    if model == "ollama":
+    if uses_ollama_chat_provider(model):
         return openai.AsyncOpenAI(
-            base_url=OLLAMA_BASE_URL,
-            api_key="ollama"
-        )
-    elif model == "qwen":
-        return openai.AsyncOpenAI(
-            base_url=OLLAMA_BASE_URL,
-            api_key="qwen"
+            base_url=get_ollama_base_url(),
+            api_key="ollama",
         )
     elif model == "huggingface":
         return openai.AsyncOpenAI(
@@ -378,6 +368,11 @@ def embed_texts_ollama(texts: list[str], embed_model: str) -> list[list[float]]:
     Long inputs are split, embedded, and mean-pooled so Ollama's context limit is not exceeded.
     """
     embed_model = str(embed_model or "").strip() or "mxbai-embed-large"
+    try:
+        from pageindex.model_registry import resolve_embed_model_for_api
+        embed_model = resolve_embed_model_for_api(embed_model)
+    except Exception:
+        pass
     texts = ["" if t is None else str(t) for t in (texts or [])]
     if not texts:
         return []
@@ -610,15 +605,12 @@ async def generate_node_summary_mmr(node: dict, *, opt=None, model=None) -> str:
     return "\n\n".join(selected).strip()
 
 def get_model_name(model=None):
-    """Get the model name based on provider and input model."""
-    if model == "ollama":
-        return OLLAMA_MODEL
-    elif model == "huggingface":
-        return "openai/gpt-oss-120b:groq"
-    elif model == "qwen":
-        return QWEN_MODEL
-    else:
-        return model
+    """Get the API model name for a chat alias or raw model string (see llm_models.yaml)."""
+    from pageindex.model_registry import resolve_chat_model_for_api
+
+    if model in ("ollama", "qwen", "huggingface"):
+        return resolve_chat_model_for_api(model)
+    return resolve_chat_model_for_api(model)
 
 def count_tokens(text, model=None):
     if not text:
@@ -658,12 +650,24 @@ def ChatGPT_API_with_finish_reason(model, prompt, chat_history=None):
         except Exception as e:
             print('************* Retrying *************')
             logging.error(f"Error: {e}")
+            if _is_non_retryable_llm_error(e):
+                return "Error", "error"
             if i < max_retries - 1:
                 time.sleep(1)  # Wait for 1秒 before retrying
             else:
-                logging.error('Max retries reached for prompt: ' + prompt)
-                return "Error"
+                logging.error("Max retries reached for ChatGPT_API_with_finish_reason")
+                return "Error", "error"
 
+
+
+def _is_non_retryable_llm_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return (
+        "model_not_found" in msg
+        or "does not exist" in msg
+        or "not found" in msg and "model" in msg
+        or "invalid_request_error" in msg and "404" in msg
+    )
 
 
 def ChatGPT_API(model, prompt, chat_history=None):
@@ -689,10 +693,12 @@ def ChatGPT_API(model, prompt, chat_history=None):
         except Exception as e:
             print('************* Retrying *************')
             logging.error(f"Error: {e}")
+            if _is_non_retryable_llm_error(e):
+                return "Error"
             if i < max_retries - 1:
                 time.sleep(1)  # Wait for 1秒 before retrying
             else:
-                logging.error('Max retries reached for prompt: ' + prompt)
+                logging.error("Max retries reached for ChatGPT_API")
                 return "Error"
 
 
@@ -713,11 +719,13 @@ async def ChatGPT_API_async(model, prompt):
         except Exception as e:
             print('************* Retrying *************')
             logging.error(f"Error: {e}")
+            if _is_non_retryable_llm_error(e):
+                return "Error"
             if i < max_retries - 1:
                 await asyncio.sleep(1)  # Wait for 1s before retrying
             else:
-                logging.error('Max retries reached for prompt: ' + prompt)
-                return "Error"  
+                logging.error("Max retries reached for ChatGPT_API_async")
+                return "Error"
             
             
 def get_json_content(response):

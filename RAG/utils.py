@@ -32,9 +32,67 @@ import sys
 import json
 import argparse
 import asyncio
+import threading
 from urllib.parse import quote
 from collections import defaultdict
 from typing import List, Dict, Any, Optional
+
+ConversationTurn = Dict[str, str]
+DEFAULT_MAX_CONVERSATION_TURNS = 10
+
+
+def normalize_conversation_history(
+    history: Optional[List[Dict[str, Any]]],
+    *,
+    max_turns: int = DEFAULT_MAX_CONVERSATION_TURNS,
+) -> List[ConversationTurn]:
+    """Validate and trim conversation history to recent turns."""
+    if not history:
+        return []
+    normalized: List[ConversationTurn] = []
+    for item in history:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role", "")).strip().lower()
+        content = str(item.get("content", "")).strip()
+        if role not in ("user", "assistant") or not content:
+            continue
+        normalized.append({"role": role, "content": content})
+    if max_turns > 0 and len(normalized) > max_turns:
+        normalized = normalized[-max_turns:]
+    return normalized
+
+
+def format_conversation_for_prompt(
+    history: Optional[List[Dict[str, Any]]],
+    *,
+    max_turns: int = DEFAULT_MAX_CONVERSATION_TURNS,
+) -> str:
+    """Format prior turns for inclusion in LLM prompts."""
+    turns = normalize_conversation_history(history, max_turns=max_turns)
+    if not turns:
+        return ""
+    lines = []
+    for turn in turns:
+        label = "User" if turn["role"] == "user" else "Assistant"
+        lines.append(f"{label}: {turn['content']}")
+    return "\n\n".join(lines)
+
+
+def build_retrieval_query(
+    query: str,
+    history: Optional[List[Dict[str, Any]]],
+    *,
+    max_turns: int = 6,
+) -> str:
+    """Combine recent user turns with the current query for keyword matching."""
+    turns = normalize_conversation_history(history, max_turns=max_turns)
+    if not turns:
+        return query
+    parts = [t["content"] for t in turns if t["role"] == "user"][-3:]
+    parts.append(query)
+    combined = " ".join(p.strip() for p in parts if p.strip()).strip()
+    return combined or query
 from dotenv import load_dotenv
 
 # Add parent directory to path to ensure imports work
@@ -43,12 +101,30 @@ project_root = os.path.dirname(script_dir)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from pageindex.utils import ChatGPT_API, ChatGPT_API_async, get_model_name, extract_json
+from pageindex.utils import (
+    ChatGPT_API,
+    ChatGPT_API_async,
+    get_model_name,
+    extract_json,
+    cosine_sim,
+    ConfigLoader,
+    get_openai_client,
+    _embed_parts_ollama,
+    _load_cached_embedding,
+    _save_cached_embedding,
+)
 import openai
 
 load_dotenv()
 
-async def combine_answers(query: str, all_trees_node_maps_with_answers: List[Dict[str, Any]], model: Optional[str] = None) -> tuple[str, List[Dict[str, str]]]:
+_warm_embed_lock = threading.Lock()
+
+async def combine_answers(
+    query: str,
+    all_trees_node_maps_with_answers: List[Dict[str, Any]],
+    model: Optional[str] = None,
+    conversation_history: Optional[List[Dict[str, Any]]] = None,
+) -> tuple[str, List[Dict[str, str]]]:
     """
     Combine answers from multiple documents into a single answer with inline citations.
     Returns (answer_text, citation_sources) where citation_sources is [{name, url}, ...] for the UI.
@@ -95,8 +171,15 @@ async def combine_answers(query: str, all_trees_node_maps_with_answers: List[Dic
 
     Directly return the final answer. Do not output anything else.
     """
+    history_block = format_conversation_for_prompt(conversation_history)
+    history_section = (
+        f"\n    Previous conversation:\n    {history_block}\n"
+        if history_block
+        else ""
+    )
     prompt['user_prompt'] = f"""
-    Query: {query}
+    {history_section}
+    Current query: {query}
 
     Table of answers (each may already contain [Source: filename] citations):
     {json.dumps(combined_answer, indent=2)}
@@ -111,9 +194,11 @@ async def combine_answers(query: str, all_trees_node_maps_with_answers: List[Dic
 
 # Configuration - paths relative to project root
 async def generate_answer_for_each_context(
-    query: str, 
-    all_trees_node_maps: List[Dict[str, Any]], 
-    model: Optional[str] = None):
+    query: str,
+    all_trees_node_maps: List[Dict[str, Any]],
+    model: Optional[str] = None,
+    conversation_history: Optional[List[Dict[str, Any]]] = None,
+):
     """Generate answer for each context with inline [Source: filename] citations."""
     def _build_context(doc_info: Dict[str, Any]) -> str:
         text = doc_info.get("context", "")
@@ -146,7 +231,11 @@ async def generate_answer_for_each_context(
         # print(f"Context: {context}")
         
         answer = await generate_answer_with_citations(
-            query, context, doc_path=doc_path, model=model
+            query,
+            context,
+            doc_path=doc_path,
+            model=model,
+            conversation_history=conversation_history,
         )
         # print(f"Answer: {answer}")
         doc_info["answer"] = answer
@@ -162,25 +251,26 @@ async def generate_answer_for_each_context(
 
     return all_trees_node_maps
 
-def load_docindex(docindex_path: Optional[str] = None) -> Dict[str, List[str]]:
+def load_docindex(docindex_path: Optional[str] = None, quiet: bool = False) -> Dict[str, List[str]]:
     """Load DocIndex from file."""
-    # Use provided path or default to module-level DOCINDEX_PATH
-    path = docindex_path 
-    
+    path = docindex_path
+
     if not os.path.exists(path):
-        print(f"DocIndex not found at {path}")
-        print("Please run run_pageindex.py first to generate document structures and DocIndex.")
+        if not quiet:
+            print(f"DocIndex not found at {path}")
+            print("Please run run_pageindex.py first to generate document structures and DocIndex.")
         return {}
-    
-    print(f"Loading DocIndex from {path}")
-    with open(path, 'r', encoding='utf-8') as f:
+
+    if not quiet:
+        print(f"Loading DocIndex from {path}")
+    with open(path, "r", encoding="utf-8") as f:
         doc_index = json.load(f)
-    
-    # Convert to defaultdict for easier handling
+
     if isinstance(doc_index, dict):
         doc_index = defaultdict(list, doc_index)
-    
-    print(f"DocIndex loaded successfully with {len(doc_index)} keywords")
+
+    if not quiet:
+        print(f"DocIndex loaded successfully with {len(doc_index)} keywords")
     return doc_index
 
 
@@ -221,23 +311,103 @@ def load_document_structure(file_path: str, results_dir: Optional[str] = None, p
     return structure
 
 
-def match_query_to_keywords(query: str, doc_index: Dict[str, List[str]], model: Optional[str] = None) -> List[str]:
-    """
-    Match query to keywords in DocIndex using LLM.
-    Returns list of document file paths for the json tree files that match the query.
-    """
+def _default_ollama_embed_model() -> str:
+    try:
+        from pageindex.model_registry import get_rag_embed_model
+        return get_rag_embed_model()
+    except Exception:
+        try:
+            return ConfigLoader().load({}).ollama_embed_model
+        except Exception:
+            return os.getenv("OLLAMA_EMBED_MODEL", "mxbai-embed-large")
+
+
+def _embed_texts_batched(
+    texts: list[str],
+    embed_model: str,
+    progress_callback: Optional[Any] = None,
+) -> list[list[float]]:
+    """Embed short texts with API batching and disk cache (keywords / queries)."""
+    embed_model = str(embed_model or "").strip() or "mxbai-embed-large"
+    texts = ["" if t is None else str(t) for t in (texts or [])]
+    if not texts:
+        return []
+
+    out: list[list[float] | None] = [None] * len(texts)
+    to_fetch: list[str] = []
+    fetch_idx: list[int] = []
+    for i, t in enumerate(texts):
+        cached = _load_cached_embedding(embed_model, t)
+        if cached is not None:
+            out[i] = cached
+        else:
+            to_fetch.append(t)
+            fetch_idx.append(i)
+
+    if to_fetch:
+        cached_count = len(texts) - len(to_fetch)
+        if progress_callback:
+            progress_callback(
+                f"  Embedding {len(to_fetch)} text(s) "
+                f"({cached_count} already cached, model={embed_model})..."
+            )
+        client = get_openai_client("ollama")
+        fetched = _embed_parts_ollama(client, embed_model, to_fetch)
+        for i, emb in zip(fetch_idx, fetched):
+            _save_cached_embedding(embed_model, texts[i], emb)
+            out[i] = emb
+        if progress_callback:
+            progress_callback(f"  Finished embedding {len(to_fetch)} text(s).")
+
+    return [e or [] for e in out]
+
+
+def warm_docindex_keyword_embeddings(
+    doc_index: Dict[str, List[str]],
+    embed_model: Optional[str] = None,
+    progress_callback: Optional[Any] = None,
+) -> int:
+    """Pre-embed DocIndex keywords so query-time Step 1 only embeds the query."""
+    with _warm_embed_lock:
+        keywords = list((doc_index or {}).keys())
+        if not keywords:
+            return 0
+
+        embed_model = str(embed_model or _default_ollama_embed_model()).strip() or "mxbai-embed-large"
+        uncached = [k for k in keywords if _load_cached_embedding(embed_model, k) is None]
+        if not uncached:
+            if progress_callback:
+                progress_callback(
+                    f"  DocIndex keywords already embedded ({len(keywords)} keywords)."
+                )
+            return 0
+
+        if progress_callback:
+            progress_callback(
+                f"  Pre-warming {len(uncached)} keyword embedding(s) "
+                f"({len(keywords) - len(uncached)} cached)..."
+            )
+        _embed_texts_batched(uncached, embed_model, progress_callback=progress_callback)
+        return len(uncached)
+
+
+def _cached_keyword_embeddings(keywords: list[str], embed_model: str) -> list[list[float]]:
+    return [_load_cached_embedding(embed_model, k) or [] for k in keywords]
+
+
+def match_query_to_keywords_llm(
+    query: str, doc_index: Dict[str, List[str]], model: Optional[str] = None
+) -> List[str]:
+    """Match query to DocIndex keywords using an LLM."""
     if not doc_index:
         return []
-    
-    # Get all keywords
+
     keywords = list(doc_index.keys())
-    
     if not keywords:
         return []
-    
-    # Use LLM to find relevant keywords
+
     prompt = {}
-    prompt['system_prompt'] = f"""
+    prompt["system_prompt"] = """
     You are a helpful assistant that identifies which keywords are relevant to answering a query.
 
     Task:
@@ -245,38 +415,127 @@ def match_query_to_keywords(query: str, doc_index: Dict[str, List[str]], model: 
     Your task is to identify which keywords are relevant to answering the query.
 
     IMPORTANT: You must reply in the following JSON format:
-    {{
+    {
         "thinking": "<Your thinking process on which keywords are relevant>",
         "relevant_keywords": ["keyword1", "keyword2", ...]
-    }}
+    }
     Directly return the final JSON structure. Do not output anything else.
     """
-    prompt['user_prompt'] = f"""
+    prompt["user_prompt"] = f"""
     Query: {query}
     Keywords: {json.dumps(keywords, indent=2)}
     """
-    
 
     try:
         response = ChatGPT_API(model=model, prompt=prompt)
-        
-        # Extract JSON from response
         result = extract_json(response)
-        relevant_keywords = result.get('relevant_keywords', [])
-        print(f"Relevant keywords: {relevant_keywords}")
+        relevant_keywords = result.get("relevant_keywords", [])
+        print(f"Relevant keywords (llm): {relevant_keywords}")
     except Exception as e:
         print(f"Error matching keywords: {e}")
-        print(f"Response: {response}")
-        # Fallback: return all keywords if matching fails
         relevant_keywords = keywords
-    
-    # Collect all document paths for relevant keywords
+
     matched_docs = set()
     for keyword in relevant_keywords:
         if keyword in doc_index:
             matched_docs.update(doc_index[keyword])
-    
     return list(matched_docs)
+
+
+def match_query_to_keywords_embed(
+    query: str,
+    doc_index: Dict[str, List[str]],
+    embed_model: Optional[str] = None,
+    top_k: int = 8,
+    min_similarity: float = 0.30,
+    progress_callback: Optional[Any] = None,
+) -> List[str]:
+    """Match query to DocIndex keywords via embedding cosine similarity."""
+    if not doc_index:
+        return []
+
+    keywords = list(doc_index.keys())
+    if not keywords:
+        return []
+
+    embed_model = str(embed_model or _default_ollama_embed_model()).strip() or "mxbai-embed-large"
+    top_k = max(1, int(top_k or 8))
+    min_similarity = float(min_similarity)
+
+    uncached_kw = [
+        k for k in keywords if _load_cached_embedding(embed_model, k) is None
+    ]
+    if uncached_kw:
+        if progress_callback:
+            progress_callback(
+                f"  Embedding {len(uncached_kw)} keyword(s) "
+                f"({len(keywords) - len(uncached_kw)} cached)..."
+            )
+        _embed_texts_batched(uncached_kw, embed_model, progress_callback=progress_callback)
+
+    if progress_callback:
+        progress_callback("  Embedding query...")
+    q_emb = _embed_texts_batched([query], embed_model, progress_callback=progress_callback)[0]
+    kw_embs = _cached_keyword_embeddings(keywords, embed_model)
+
+    if progress_callback:
+        progress_callback("  Scoring keyword similarity...")
+
+    scored = [(kw, cosine_sim(q_emb, kw_emb)) for kw, kw_emb in zip(keywords, kw_embs)]
+    scored.sort(key=lambda x: -x[1])
+
+    relevant_keywords = [kw for kw, sim in scored if sim >= min_similarity][:top_k]
+    if not relevant_keywords and scored:
+        relevant_keywords = [scored[0][0]]
+
+    scored_display = [
+        (kw, round(sim, 3))
+        for kw, sim in scored
+        if kw in relevant_keywords
+    ]
+    print(
+        f"Relevant keywords (embed, model={embed_model}, "
+        f"top_k={top_k}, min_sim={min_similarity}): {scored_display}"
+    )
+    if progress_callback:
+        progress_callback(f"  Selected {len(relevant_keywords)} keyword(s).")
+
+    scored_map = {kw: sim for kw, sim in scored}
+    doc_best_sim: Dict[str, float] = {}
+    for keyword in relevant_keywords:
+        sim = scored_map.get(keyword, 0.0)
+        for path in doc_index.get(keyword, []):
+            doc_best_sim[path] = max(doc_best_sim.get(path, 0.0), sim)
+    return sorted(doc_best_sim.keys(), key=lambda p: -doc_best_sim[p])
+
+
+def match_query_to_keywords(
+    query: str,
+    doc_index: Dict[str, List[str]],
+    model: Optional[str] = None,
+    method: str = "embed",
+    embed_model: Optional[str] = None,
+    top_k: int = 8,
+    min_similarity: float = 0.30,
+    progress_callback: Optional[Any] = None,
+) -> List[str]:
+    """
+    Match query to keywords in DocIndex.
+    Returns list of document file paths for the json tree files that match the query.
+    """
+    method = (method or "embed").strip().lower()
+    if method == "llm":
+        return match_query_to_keywords_llm(query, doc_index, model=model)
+    if method == "embed":
+        return match_query_to_keywords_embed(
+            query,
+            doc_index,
+            embed_model=embed_model,
+            top_k=top_k,
+            min_similarity=min_similarity,
+            progress_callback=progress_callback,
+        )
+    raise ValueError(f"Unknown keyword match method: {method!r} (use 'embed' or 'llm')")
 
 
 def create_node_mapping(tree: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
@@ -371,18 +630,21 @@ def print_wrapped(text: str, width: int = 80, return_text: bool = False):
     print(wrapped)
 
 
-async def tree_search(query: str, doc_info: Dict[str, Any], model: Optional[str] = None) -> Dict[str, Any]:
+async def tree_search(
+    query: str,
+    doc_info: Dict[str, Any],
+    model: Optional[str] = None,
+    conversation_history: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
     """
     Perform tree search to find relevant nodes for the query.
     Similar to the notebook's tree search step.
     """
-    # Remove text fields to reduce token usage
-    tree = doc_info.get('tree')
-    tree_without_text = remove_fields(tree.copy(), fields=['text'])
-    
+    tree = doc_info.get("tree")
+    tree_without_text = remove_fields(tree.copy(), fields=["text"])
 
     prompt = {}
-    prompt['system_prompt'] = f"""
+    prompt["system_prompt"] = f"""
     You are given a hierarchical tree structure of a document.
 
     The tree structure has parent nodes that may contain child nodes (nested in a "nodes" field).
@@ -395,6 +657,7 @@ async def tree_search(query: str, doc_info: Dict[str, Any], model: Optional[str]
     - When type="mmr", prefer matching on concrete terms, entities, and exact phrases in the snippets.
 
     Your task is to find all nodes that are likely to contain the answer to the question.
+    The current query may be a follow-up; use the previous conversation to interpret it.
 
     IMPORTANT RULES:
     1. If a parent node is relevant, you may also need to include its child nodes for complete context
@@ -409,23 +672,30 @@ async def tree_search(query: str, doc_info: Dict[str, Any], model: Optional[str]
     }}
     Directly return the final JSON structure. Do not output anything else.
     """
-    prompt['user_prompt'] = f"""
-    Query: {query}
+    history_block = format_conversation_for_prompt(conversation_history)
+    history_section = (
+        f"Previous conversation:\n{history_block}\n\n"
+        if history_block
+        else ""
+    )
+    prompt["user_prompt"] = f"""
+    {history_section}Current query: {query}
     Document tree structure: {json.dumps(tree_without_text, indent=2)}
     """
 
-    
-
+    response = None
     try:
         response = await ChatGPT_API_async(model=model, prompt=prompt)
-        
-        # Extract JSON from response
+        if not response or str(response).strip() == "Error":
+            return {"thinking": "", "node_list": []}
         result = extract_json(response)
-  
+        if not isinstance(result, dict):
+            return {"thinking": "", "node_list": []}
         return result
     except Exception as e:
         print(f"Error in tree search: {e}")
-        print(f"Response: {response}")
+        if response is not None:
+            print(f"Response: {response}")
         return {"thinking": "", "node_list": []}
 
 
@@ -519,7 +789,13 @@ def _doc_basename_for_citation(doc_path: Optional[str]) -> str:
     return base
 
 
-async def generate_answer_with_citations(query: str, context: str, doc_path: Optional[str] = None, model: Optional[str] = None) -> str:
+async def generate_answer_with_citations(
+    query: str,
+    context: str,
+    doc_path: Optional[str] = None,
+    model: Optional[str] = None,
+    conversation_history: Optional[List[Dict[str, Any]]] = None,
+) -> str:
     """Generate answer based on query and context, with inline [Source: filename] citations."""
     doc_basename = _doc_basename_for_citation(doc_path)
     prompt = {}
@@ -538,19 +814,25 @@ async def generate_answer_with_citations(query: str, context: str, doc_path: Opt
     - Use this exact format; the filename must be exactly: {doc_basename}
 
     Instructions:
-    1. Answer the query directly and naturally.
-    2. Use the context to provide specific details, examples, or explanations.
-    3. Structure your answer to directly address what was asked.
-    4. If information is not available in the context, acknowledge this but provide what you can.
-    5. Write in a clear, natural, conversational tone.
+    1. Answer the current query directly and naturally.
+    2. Use prior conversation for context when the current query is a follow-up.
+    3. Use the context to provide specific details, examples, or explanations.
+    4. Structure your answer to directly address what was asked.
+    5. If information is not available in the context, acknowledge this but provide what you can.
+    6. Write in a clear, natural, conversational tone.
 
     Directly return the final answer. Do not output anything else.
     """
+    history_block = format_conversation_for_prompt(conversation_history)
+    history_section = (
+        f"Previous conversation:\n{history_block}\n\n"
+        if history_block
+        else ""
+    )
     prompt['user_prompt'] = f"""
-    User query: {query}
+    {history_section}Current user query: {query}
     Relevant Context from Documents: {context}
     """
-    
 
     try:
         response = await ChatGPT_API_async(model=model, prompt=prompt)
